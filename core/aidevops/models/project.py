@@ -39,3 +39,33 @@ class ProjectSummary(BaseModel):
 class ScanRequest(BaseModel):
     path: str
     use_ai: bool = True
+
+
+# ── Recommendation ─────────────────────────────────────────────
+
+class DeployCombo(BaseModel):
+    """배포 환경 + CI/CD 플랫폼의 조합 추천."""
+    id: str
+    deploy_name: str     # 예: "Docker Compose + VPS"
+    cicd_name: str       # 예: "GitHub Actions"
+    cicd_id: str         # "github_actions", "gitlab_ci", ...
+    platform: str        # "docker", "aws", "oracle", "gcp", "railway"
+    description: str     # 조합 전체 설명
+    synergy: str         # 이 조합이 잘 맞는 이유
+    pros: list[str]
+    cons: list[str]
+    estimated_cost: str
+    complexity: str      # "simple", "moderate", "complex"
+    score: int           # 1-5
+    recommended: bool = False
+
+
+class Recommendation(BaseModel):
+    project_id: str
+    scale: str           # "small", "medium", "large", "enterprise"
+    scale_label: str
+    scale_reason: str
+    infra_count: int
+    dep_count: int
+    infra_services: list[str]
+    combos: list[DeployCombo]

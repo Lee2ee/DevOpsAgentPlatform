@@ -15,7 +15,7 @@ export interface CicdResult {
   content: string;
 }
 
-export type ProjectTab = "scan" | "docker" | "cicd";
+export type ProjectTab = "scan" | "recommend" | "docker" | "cicd";
 
 interface ProjectPageStore {
   tab: ProjectTab;

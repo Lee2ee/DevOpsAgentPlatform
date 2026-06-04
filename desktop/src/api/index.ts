@@ -19,6 +19,9 @@ export const deleteProject = (id: string) =>
 export const scanWorkspace = (path: string) =>
   apiClient.post("/projects/scan-workspace", { path }).then((r) => r.data);
 
+export const getRecommendation = (projectId: string) =>
+  apiClient.get(`/projects/${projectId}/recommend`).then((r) => r.data);
+
 // ── Docker ────────────────────────────────────
 export const generateDocker = (projectId: string) =>
   apiClient.post("/docker/generate", { project_id: projectId }).then((r) => r.data);

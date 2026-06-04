@@ -9,6 +9,7 @@ from aidevops.api.routers.audit import router as audit_router
 from aidevops.api.routers.deploy import router as deploy_router
 from aidevops.api.routers.ws import router as ws_router
 from aidevops.api.routers.analyze import router as analyze_router
+from aidevops.api.routers.recommend import router as recommend_router
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -21,3 +22,4 @@ api_router.include_router(audit_router)
 api_router.include_router(deploy_router)
 api_router.include_router(ws_router)
 api_router.include_router(analyze_router)
+api_router.include_router(recommend_router)

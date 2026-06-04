@@ -1,9 +1,36 @@
-import { useState } from "react";
-import { FolderOpen, Loader, AlertCircle, Trash2, Copy, Save, RefreshCw, FolderTree, ChevronRight, Package } from "lucide-react";
+import { useState, useEffect } from "react";
+import { FolderOpen, Loader, AlertCircle, Trash2, Copy, Save, RefreshCw, FolderTree, ChevronRight, Package, Zap, CheckCircle2 } from "lucide-react";
 import { useProjectStore } from "../store/projectStore";
 import { useProjectPageStore } from "../store/projectPageStore";
 import { useActivityStore } from "../store/activityStore";
-import { generateDocker, saveDocker, generateCicd, saveCicd, scanWorkspace } from "../api";
+import { generateDocker, saveDocker, generateCicd, saveCicd, scanWorkspace, getRecommendation } from "../api";
+
+interface DeployCombo {
+  id: string;
+  deploy_name: string;
+  cicd_name: string;
+  cicd_id: string;
+  platform: string;
+  description: string;
+  synergy: string;
+  pros: string[];
+  cons: string[];
+  estimated_cost: string;
+  complexity: string;
+  score: number;
+  recommended: boolean;
+}
+
+interface Recommendation {
+  project_id: string;
+  scale: string;
+  scale_label: string;
+  scale_reason: string;
+  infra_count: number;
+  dep_count: number;
+  infra_services: string[];
+  combos: DeployCombo[];
+}
 
 interface SubProjectInfo {
   path: string;
@@ -98,6 +125,11 @@ export function ProjectPage() {
   const [workspaceResult, setWorkspaceResult] = useState<WorkspaceResult | null>(null);
   const [isWorkspaceScanning, setIsWorkspaceScanning] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
+  const [isLoadingRec, setIsLoadingRec] = useState(false);
+  const [selectedComboId, setSelectedComboId] = useState<string | null>(null);
+  const [quickStartStep, setQuickStartStep] = useState<string | null>(null);
+  const [quickStartDone, setQuickStartDone] = useState(false);
 
   // 로딩/에러는 일시적 UI 상태라 로컬 유지
   const [isGeneratingDocker, setIsGeneratingDocker] = useState(false);
@@ -116,9 +148,65 @@ export function ProjectPage() {
   const handleScan = async (path: string) => {
     if (!path.trim()) return;
     setWorkspaceResult(null);
+    setRecommendation(null);
+    setQuickStartDone(false);
     await scanProject(path.trim());
-    setTab("scan");
+    setTab("recommend");
     addActivity({ type: "scan", title: `프로젝트 스캔`, detail: path.trim(), status: "info" });
+  };
+
+  // 프로젝트 변경 시 초기화 + 추천 즉시 로드
+  useEffect(() => {
+    setRecommendation(null);
+    setSelectedComboId(null);
+    setQuickStartDone(false);
+    if (!currentProject) return;
+
+    setIsLoadingRec(true);
+    getRecommendation(currentProject.id)
+      .then((data) => {
+        const rec = data as Recommendation;
+        setRecommendation(rec);
+        const defaultCombo = rec.combos.find((c) => c.recommended) ?? rec.combos[0];
+        if (defaultCombo) setSelectedComboId(defaultCombo.id);
+      })
+      .catch(() => setRecommendation(null))
+      .finally(() => setIsLoadingRec(false));
+  }, [currentProject?.id]);
+
+  const handleQuickStart = async () => {
+    if (!currentProject) return;
+    const combo = recommendation?.combos.find((c) => c.id === selectedComboId);
+    const cicdId = combo?.cicd_id ?? "github_actions";
+    setQuickStartStep("Docker 파일 생성 중...");
+    setQuickStartDone(false);
+    try {
+      const dockerData = await generateDocker(currentProject.id) as typeof dockerResult;
+      setDockerResult(pid, dockerData);
+      setQuickStartStep("Docker 파일 저장 중...");
+      await saveDocker(dockerData!.generation_id, currentProject.path);
+      setSavedDocker(pid, true);
+
+      setQuickStartStep(`CI/CD (${combo?.cicd_name ?? cicdId}) 생성 중...`);
+      const cicdData = await generateCicd(currentProject.id, cicdId) as typeof cicdResult;
+      setCicdResult(pid, cicdData);
+      setQuickStartStep("CI/CD 파일 저장 중...");
+      await saveCicd(cicdData!.generation_id, currentProject.path);
+      setSavedCicd(pid, true);
+
+      setQuickStartDone(true);
+      addActivity({
+        type: "docker_gen",
+        title: `빠른 시작 완료: ${currentProject.name}`,
+        detail: combo ? `${combo.deploy_name} + ${combo.cicd_name}` : "",
+        status: "success",
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      addActivity({ type: "docker_gen", title: `빠른 시작 실패: ${currentProject.name}`, detail: msg, status: "failed" });
+    } finally {
+      setQuickStartStep(null);
+    }
   };
 
   const handleWorkspaceScan = async () => {
@@ -362,7 +450,7 @@ export function ProjectPage() {
             <>
               {/* 탭 헤더 */}
               <div className="flex gap-1 mb-3 flex-shrink-0">
-                {(["scan", "docker", "cicd"] as const).map((t) => (
+                {(["scan", "recommend", "docker", "cicd"] as const).map((t) => (
                   <button
                     key={t}
                     onClick={() => setTab(t)}
@@ -372,7 +460,7 @@ export function ProjectPage() {
                         : "bg-gray-800 text-gray-400 hover:text-gray-200"
                     }`}
                   >
-                    {t === "scan" ? "스캔 결과" : t === "docker" ? "Docker" : "CI/CD"}
+                    {t === "scan" ? "스캔 결과" : t === "recommend" ? "추천" : t === "docker" ? "Docker" : "CI/CD"}
                   </button>
                 ))}
                 <span className="ml-auto text-xs text-gray-600 self-center truncate max-w-xs">
@@ -382,6 +470,151 @@ export function ProjectPage() {
 
               {/* 탭 콘텐츠 */}
               <div className="flex-1 min-h-0 overflow-y-auto">
+                {/* ── 추천 탭 ── */}
+                {tab === "recommend" && (
+                  <div className="space-y-4">
+                    {isLoadingRec && (
+                      <div className="flex items-center gap-2 text-gray-400 text-sm">
+                        <Loader size={16} className="animate-spin" /> 분석 중...
+                      </div>
+                    )}
+                    {recommendation && (
+                      <>
+                        {/* 규모 요약 */}
+                        <div className="bg-gray-800 rounded-lg p-4">
+                          <div className="flex items-center gap-3 mb-2">
+                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                              recommendation.scale === "small"      ? "bg-green-900 text-green-300" :
+                              recommendation.scale === "medium"     ? "bg-blue-900 text-blue-300" :
+                              recommendation.scale === "large"      ? "bg-orange-900 text-orange-300" :
+                                                                      "bg-red-900 text-red-300"
+                            }`}>
+                              {recommendation.scale_label}
+                            </span>
+                            <span className="text-xs text-gray-400">{recommendation.scale_reason}</span>
+                          </div>
+                          {recommendation.infra_services.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5">
+                              {recommendation.infra_services.map((s) => (
+                                <span key={s} className="text-xs bg-brand-900/50 text-brand-300 rounded px-2 py-0.5">{s}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* 조합 추천 카드 */}
+                        <div className="space-y-2">
+                          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">배포 환경 + CI/CD 추천 조합</h3>
+                          {recommendation.combos.map((combo) => {
+                            const isSelected = selectedComboId === combo.id;
+                            return (
+                              <div
+                                key={combo.id}
+                                onClick={() => setSelectedComboId(combo.id)}
+                                className={`bg-gray-800 rounded-lg p-4 border cursor-pointer transition-colors ${
+                                  isSelected ? "border-brand-400" : "border-gray-700 hover:border-gray-500"
+                                }`}
+                              >
+                                {/* 헤더 */}
+                                <div className="flex items-start justify-between mb-2">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <span className={`w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 ${
+                                      isSelected ? "border-brand-400 bg-brand-400" : "border-gray-600"
+                                    }`} />
+                                    <div className="min-w-0">
+                                      <span className="text-sm font-semibold text-gray-100">{combo.deploy_name}</span>
+                                      <span className="text-gray-500 mx-1.5">+</span>
+                                      <span className="text-sm font-semibold text-brand-300">{combo.cicd_name}</span>
+                                    </div>
+                                    {combo.recommended && (
+                                      <span className="text-xs bg-brand-900 text-brand-300 px-2 py-0.5 rounded-full flex-shrink-0">추천</span>
+                                    )}
+                                  </div>
+                                  <div className="flex gap-0.5 flex-shrink-0 ml-2">
+                                    {Array.from({ length: 5 }).map((_, i) => (
+                                      <span key={i} className={`text-xs ${i < combo.score ? "text-yellow-400" : "text-gray-700"}`}>★</span>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* 설명 */}
+                                <p className="text-xs text-gray-400 ml-5 mb-1.5">{combo.description}</p>
+
+                                {/* 시너지 */}
+                                <p className="text-xs text-brand-400/80 ml-5 mb-2 italic">⚡ {combo.synergy}</p>
+
+                                {/* 장단점 */}
+                                <div className="grid grid-cols-2 gap-2 text-xs ml-5 mb-1.5">
+                                  <div className="space-y-0.5">
+                                    {combo.pros.map((p) => (
+                                      <div key={p} className="text-green-400 flex items-start gap-1">
+                                        <span className="flex-shrink-0">✓</span>{p}
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <div className="space-y-0.5">
+                                    {combo.cons.map((c) => (
+                                      <div key={c} className="text-gray-500 flex items-start gap-1">
+                                        <span className="flex-shrink-0">−</span>{c}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                                <p className="text-xs text-gray-500 ml-5">{combo.estimated_cost}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* 빠른 시작 */}
+                        <div className="bg-gray-800 rounded-lg p-4">
+                          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">빠른 시작</h3>
+                          {quickStartDone ? (
+                            <div className="flex items-center gap-2 text-green-400 text-sm">
+                              <CheckCircle2 size={16} />
+                              완료! Docker + CI/CD 파일이 프로젝트에 저장됐습니다.
+                              <button onClick={() => setTab("docker")} className="ml-auto text-xs text-brand-400 hover:text-brand-300">
+                                Docker 확인 →
+                              </button>
+                            </div>
+                          ) : quickStartStep ? (
+                            <div className="flex items-center gap-2 text-gray-300 text-sm">
+                              <Loader size={14} className="animate-spin flex-shrink-0" />
+                              {quickStartStep}
+                            </div>
+                          ) : (() => {
+                            const combo = recommendation.combos.find((c) => c.id === selectedComboId);
+                            return (
+                              <div className="flex items-center gap-4">
+                                <div className="text-xs text-gray-400 flex-1 min-w-0">
+                                  {combo ? (
+                                    <span>
+                                      <span className="text-gray-200 font-medium">{combo.deploy_name}</span>
+                                      <span className="text-gray-500 mx-1">+</span>
+                                      <span className="text-brand-300 font-medium">{combo.cicd_name}</span>
+                                      <span className="text-gray-500"> 조합으로 Docker·CI/CD 파일을 생성하고 저장합니다.</span>
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-500">조합을 선택하세요.</span>
+                                  )}
+                                </div>
+                                <button
+                                  onClick={handleQuickStart}
+                                  disabled={!selectedComboId}
+                                  className="flex items-center gap-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 rounded text-sm transition-colors flex-shrink-0"
+                                >
+                                  <Zap size={14} />
+                                  빠른 시작
+                                </button>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
                 {/* ── 스캔 결과 탭 ── */}
                 {tab === "scan" && sr && (
                   <div className="bg-gray-800 rounded-lg p-4 space-y-4">

@@ -81,7 +81,7 @@ const CICD_PLATFORMS = [
 export function ProjectPage() {
   const {
     currentProject, isScanning, scanError,
-    scanProject, deleteProject, projects, setCurrentProject,
+    scanProject, deleteProject, projects, setCurrentProject, loadProjects,
   } = useProjectStore();
 
   const {
@@ -168,6 +168,8 @@ export function ProjectPage() {
         }
       })
     );
+    // store 프로젝트 목록 갱신 (apiScanProject는 store를 업데이트하지 않으므로)
+    await loadProjects();
     addActivity({ type: "scan", title: `워크스페이스 스캔: ${rootName}`, detail: `${subprojects.length}개 프로젝트 분석 완료`, status: "info" });
   };
 
@@ -821,7 +823,57 @@ function ProjectTree({
   onDelete: (id: string) => void;
   onWorkspaceClose?: () => void;
 }) {
-  // 부모 경로별로 그룹화
+  // ── 워크스페이스 모드: workspaceProjects를 직접 사용 (store 동기화 전에도 즉시 표시) ──
+  if (workspaceRootName && workspaceProjects.length > 0) {
+    return (
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {/* 워크스페이스 루트 헤더 */}
+        <div className="flex items-center gap-1.5 px-2 py-1.5 mt-1 mb-0.5">
+          <FolderTree size={11} className="text-brand-400 flex-shrink-0" />
+          <span className="text-xs font-semibold text-gray-300 truncate flex-1">{workspaceRootName}</span>
+          {onWorkspaceClose && (
+            <button
+              onClick={onWorkspaceClose}
+              className="text-xs text-gray-600 hover:text-gray-400 flex-shrink-0 px-1"
+              title="워크스페이스 닫기"
+            >✕</button>
+          )}
+        </div>
+        {/* 서브 프로젝트 목록 */}
+        {workspaceProjects.map((wp, idx) => {
+          const isLast = idx === workspaceProjects.length - 1;
+          const storeP = projects.find((p) => p.path === wp.path);
+          return (
+            <div
+              key={wp.path}
+              className={`flex items-center rounded text-sm transition-colors ${
+                storeP && currentProject?.id === storeP.id ? "bg-brand-700" : "bg-gray-800 hover:bg-gray-700"
+              }`}
+            >
+              <span className="pl-3 text-gray-700 font-mono text-xs flex-shrink-0 select-none">
+                {isLast ? "└" : "├"}
+              </span>
+              <button
+                onClick={() => {
+                  if (storeP) onSelect(storeP);
+                  document.getElementById(`ws-card-${wp.path}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                className="flex-1 text-left flex items-center gap-2 px-2 py-2 min-w-0"
+              >
+                <span className="font-medium truncate flex-1">{wp.name}</span>
+                <span className="text-gray-500 text-xs flex-shrink-0">{wp.language ?? "…"}</span>
+                {wp.isLoading    && <Loader       size={11} className="animate-spin text-gray-500 flex-shrink-0" />}
+                {wp.quickStartDone && <CheckCircle2 size={11} className="text-green-400 flex-shrink-0" />}
+                {wp.scanError    && <AlertCircle  size={11} className="text-red-400 flex-shrink-0" />}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // ── 일반 모드: store의 projects를 부모 경로 기준으로 그룹화 ──
   const groups = new Map<string, Project[]>();
   for (const p of projects) {
     const parent = getParentPath(p.path);
@@ -833,32 +885,18 @@ function ProjectTree({
     <div className="flex-1 overflow-y-auto min-h-0 space-y-1">
       {Array.from(groups.entries()).map(([parentPath, groupProjects]) => {
         const parentName = parentPath.split("/").pop() ?? parentPath;
-        const isWorkspaceGroup = workspaceRootName && parentName === workspaceRootName;
         const grouped = groupProjects.length > 1;
 
         return (
           <div key={parentPath}>
-            {/* 그룹 헤더 (2개 이상일 때만) */}
             {grouped && (
               <div className="flex items-center gap-1.5 px-2 py-1 mt-1">
                 <FolderTree size={11} className="text-brand-400 flex-shrink-0" />
                 <span className="text-xs font-semibold text-gray-400 truncate flex-1">{parentName}</span>
-                {isWorkspaceGroup && onWorkspaceClose && (
-                  <button
-                    onClick={onWorkspaceClose}
-                    className="text-xs text-gray-600 hover:text-gray-400 flex-shrink-0"
-                    title="워크스페이스 닫기"
-                  >
-                    ✕
-                  </button>
-                )}
               </div>
             )}
-
-            {/* 프로젝트 항목 */}
             {groupProjects.map((p, idx) => {
               const isLast = idx === groupProjects.length - 1;
-              const wp = workspaceProjects.find((w) => w.path === p.path);
               return (
                 <div
                   key={p.id}
@@ -872,23 +910,11 @@ function ProjectTree({
                     </span>
                   )}
                   <button
-                    onClick={() => {
-                      onSelect(p);
-                      if (wp) {
-                        const el = document.getElementById(`ws-card-${wp.path}`);
-                        el?.scrollIntoView({ behavior: "smooth", block: "start" });
-                      }
-                    }}
+                    onClick={() => onSelect(p)}
                     className="flex-1 text-left flex items-center gap-2 px-2 py-2 min-w-0"
                   >
                     <span className="font-medium truncate flex-1">{p.name}</span>
-                    <span className="text-gray-500 text-xs flex-shrink-0">
-                      {p.scan_result?.language ?? "?"}
-                    </span>
-                    {/* 워크스페이스 상태 */}
-                    {wp?.isLoading && <Loader size={11} className="animate-spin text-gray-500 flex-shrink-0" />}
-                    {wp?.quickStartDone && <CheckCircle2 size={11} className="text-green-400 flex-shrink-0" />}
-                    {wp?.scanError && <AlertCircle size={11} className="text-red-400 flex-shrink-0" />}
+                    <span className="text-gray-500 text-xs flex-shrink-0">{p.scan_result?.language ?? "?"}</span>
                   </button>
                   <button
                     onClick={() => onDelete(p.id)}

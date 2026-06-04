@@ -23,7 +23,7 @@ _PLATFORM_MAP: dict[str, tuple[str, str]] = {
     "gitlab_ci":      ("gitlab_ci.j2",      ".gitlab-ci.yml"),
     "jenkins":        ("jenkinsfile.j2",     "Jenkinsfile"),
     "azure_devops":   ("azure_devops.j2",    "azure-pipelines.yml"),
-    "bitbucket":      ("github_actions.j2",  "bitbucket-pipelines.yml"),  # fallback
+    "bitbucket":      ("bitbucket_pipelines.j2", "bitbucket-pipelines.yml"),
 }
 
 _FRAMEWORK_PORTS: dict[str, int] = {

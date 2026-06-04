@@ -40,7 +40,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '{{ language_version }}'
+{% if build_tool not in ('poetry', 'hatch') %}
           cache: 'pip'
+{% endif %}
+
+{% endif %}
+{% if pkg_install_command %}
+      - name: Install Dependencies
+        run: {{ pkg_install_command }}
 
 {% endif %}
       - name: Run Tests

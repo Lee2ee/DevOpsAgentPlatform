@@ -1,0 +1,91 @@
+image: atlassian/default-image:4
+
+definitions:
+  steps:
+    - step: &build-test
+        name: Build and Test
+{% if language == 'java' or language == 'kotlin' %}
+        image: eclipse-temurin:{{ language_version }}-jdk
+        caches:
+{% if build_tool == 'gradle' %}
+          - gradle
+{% else %}
+          - maven
+{% endif %}
+        script:
+          - {{ test_command }}
+          - {{ build_command }}
+        artifacts:
+{% if build_tool == 'gradle' %}
+          - build/libs/*.jar
+{% else %}
+          - target/*.jar
+{% endif %}
+
+{% elif language in ('javascript', 'typescript') %}
+        image: node:{{ language_version }}-alpine
+        caches:
+          - node
+        script:
+          - {{ pkg_install_command }}
+          - {{ test_command }}
+          - {{ build_command }}
+        artifacts:
+          - dist/**
+
+{% elif language == 'python' %}
+        image: python:{{ language_version }}-slim
+        caches:
+          - pip
+        script:
+          - {{ pkg_install_command }}
+          - {{ test_command }}
+
+{% else %}
+        script:
+          - echo "Build and test"
+
+{% endif %}
+    - step: &docker-push
+        name: Build and Push Docker Image
+        services:
+          - docker
+        script:
+{% if registry %}
+          - docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD {{ registry }}
+          - export IMAGE={{ registry }}/{{ app_name }}
+{% else %}
+          - docker login -u $REGISTRY_USERNAME -p $REGISTRY_PASSWORD $REGISTRY
+          - export IMAGE=$REGISTRY/{{ app_name }}
+{% endif %}
+          - docker build -t $IMAGE:$BITBUCKET_BUILD_NUMBER -t $IMAGE:latest .
+          - docker push $IMAGE:$BITBUCKET_BUILD_NUMBER
+          - docker push $IMAGE:latest
+
+    - step: &deploy
+        name: Deploy to Production
+        script:
+          - pipe: atlassian/ssh-run:0.4.1
+            variables:
+              SSH_USER: $SERVER_USER
+              SERVER: $SERVER_HOST
+              SSH_KEY: $SERVER_SSH_KEY
+              COMMAND: >-
+{% if registry %}
+                export IMAGE={{ registry }}/{{ app_name }} &&
+{% else %}
+                export IMAGE=$REGISTRY/{{ app_name }} &&
+{% endif %}
+                set -e &&
+                cd /app &&
+                docker pull $IMAGE:$BITBUCKET_BUILD_NUMBER &&
+                IMAGE_TAG=$BITBUCKET_BUILD_NUMBER docker-compose up -d &&
+                sleep 15 &&
+                curl -sf http://localhost:{{ port }}/{% if framework == 'springboot' %}actuator/health{% else %}health{% endif %}
+
+pipelines:
+  branches:
+    {{ branch }}:
+      - step: *build-test
+      - step: *docker-push
+      - step: *deploy

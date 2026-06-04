@@ -238,19 +238,31 @@ def generate_compose(scan: ScanResult, registry: str | None = None) -> tuple[str
 
 def _build_app_env(scan: ScanResult) -> dict[str, str]:
     """앱 서비스의 환경변수 템플릿을 생성한다."""
+    lang = (scan.language or "").lower()
+    fw = (scan.framework or "").lower()
+    is_spring = lang in ("java", "kotlin") and "spring" in fw
     env: dict[str, str] = {}
 
     for db in scan.database:
         if db == "mysql":
-            env["SPRING_DATASOURCE_URL"] = "jdbc:mysql://mysql:3306/${DB_NAME:-appdb}"
-            env["SPRING_DATASOURCE_USERNAME"] = "${DB_USER:-app}"
-            env["SPRING_DATASOURCE_PASSWORD"] = "${DB_PASSWORD:-secret}"
+            if is_spring:
+                env["SPRING_DATASOURCE_URL"] = "jdbc:mysql://mysql:3306/${DB_NAME:-appdb}"
+                env["SPRING_DATASOURCE_USERNAME"] = "${DB_USER:-app}"
+                env["SPRING_DATASOURCE_PASSWORD"] = "${DB_PASSWORD:-secret}"
+            else:
+                env["DATABASE_URL"] = "mysql://${DB_USER:-app}:${DB_PASSWORD:-secret}@mysql:3306/${DB_NAME:-appdb}"
         elif db == "postgresql":
-            env["SPRING_DATASOURCE_URL"] = "jdbc:postgresql://postgresql:5432/${DB_NAME:-appdb}"
-            env["SPRING_DATASOURCE_USERNAME"] = "${DB_USER:-app}"
-            env["SPRING_DATASOURCE_PASSWORD"] = "${DB_PASSWORD:-secret}"
+            if is_spring:
+                env["SPRING_DATASOURCE_URL"] = "jdbc:postgresql://postgresql:5432/${DB_NAME:-appdb}"
+                env["SPRING_DATASOURCE_USERNAME"] = "${DB_USER:-app}"
+                env["SPRING_DATASOURCE_PASSWORD"] = "${DB_PASSWORD:-secret}"
+            else:
+                env["DATABASE_URL"] = "postgresql://${DB_USER:-app}:${DB_PASSWORD:-secret}@postgresql:5432/${DB_NAME:-appdb}"
         elif db == "mongodb":
-            env["SPRING_DATA_MONGODB_URI"] = "mongodb://${MONGO_USER:-admin}:${MONGO_PASSWORD:-secret}@mongodb:27017/${DB_NAME:-appdb}"
+            if is_spring:
+                env["SPRING_DATA_MONGODB_URI"] = "mongodb://${MONGO_USER:-admin}:${MONGO_PASSWORD:-secret}@mongodb:27017/${DB_NAME:-appdb}"
+            else:
+                env["MONGODB_URI"] = "mongodb://${MONGO_USER:-admin}:${MONGO_PASSWORD:-secret}@mongodb:27017/${DB_NAME:-appdb}"
         elif db == "oracle":
             env["SPRING_DATASOURCE_URL"] = "jdbc:oracle:thin:@${ORACLE_HOST:-localhost}:${ORACLE_PORT:-1521}/${ORACLE_SERVICE:-ORCLPDB1}"
             env["SPRING_DATASOURCE_USERNAME"] = "${DB_USER:-app}"
@@ -259,13 +271,22 @@ def _build_app_env(scan: ScanResult) -> dict[str, str]:
 
     for cache in scan.cache:
         if cache == "redis":
-            env["SPRING_REDIS_HOST"] = "redis"
-            env["SPRING_REDIS_PORT"] = "6379"
+            if is_spring:
+                env["SPRING_REDIS_HOST"] = "redis"
+                env["SPRING_REDIS_PORT"] = "6379"
+            else:
+                env["REDIS_URL"] = "redis://redis:6379"
 
     for mq in scan.message_queue:
         if mq == "kafka":
-            env["SPRING_KAFKA_BOOTSTRAP_SERVERS"] = "kafka:9092"
+            if is_spring:
+                env["SPRING_KAFKA_BOOTSTRAP_SERVERS"] = "kafka:9092"
+            else:
+                env["KAFKA_BROKERS"] = "kafka:9092"
         elif mq == "rabbitmq":
-            env["SPRING_RABBITMQ_HOST"] = "rabbitmq"
+            if is_spring:
+                env["SPRING_RABBITMQ_HOST"] = "rabbitmq"
+            else:
+                env["RABBITMQ_URL"] = "amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-secret}@rabbitmq:5672"
 
     return env

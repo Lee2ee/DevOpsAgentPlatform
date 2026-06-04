@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { FolderOpen, Loader, AlertCircle, Trash2, Copy, Save, RefreshCw, FolderTree, Zap, CheckCircle2 } from "lucide-react";
 import { useProjectStore } from "../store/projectStore";
+import type { Project } from "../store/projectStore";
 import { useProjectPageStore } from "../store/projectPageStore";
 import { useActivityStore } from "../store/activityStore";
 import { generateDocker, saveDocker, generateCicd, saveCicd, scanWorkspace, getRecommendation, scanProject as apiScanProject } from "../api";
@@ -460,83 +461,19 @@ export function ProjectPage() {
             )}
           </div>
 
-          {/* ─── 워크스페이스 트리 or 단일 프로젝트 목록 ─── */}
-          {isWorkspaceView && workspaceProjects.length > 0 ? (
-            <div className="flex-1 overflow-y-auto min-h-0">
-              {/* 루트 */}
-              <div className="flex items-center gap-1.5 px-2 py-1.5 mb-1">
-                <FolderTree size={13} className="text-brand-400 flex-shrink-0" />
-                <span className="text-xs font-semibold text-gray-300 truncate">{workspaceRootName}</span>
-                <span className="text-xs text-gray-600 flex-shrink-0 ml-auto">
-                  {workspaceProjects.length}개
-                </span>
-              </div>
-              {/* 서브 프로젝트 */}
-              <div className="space-y-0.5">
-                {workspaceProjects.map((wp, idx) => {
-                  const isLast = idx === workspaceProjects.length - 1;
-                  return (
-                    <button
-                      key={wp.path}
-                      onClick={() => {
-                        const el = document.getElementById(`ws-card-${wp.path}`);
-                        el?.scrollIntoView({ behavior: "smooth", block: "start" });
-                      }}
-                      className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-gray-700 text-left transition-colors group"
-                    >
-                      {/* 트리 선 */}
-                      <span className="text-gray-700 flex-shrink-0 font-mono text-xs">
-                        {isLast ? "└" : "├"}
-                      </span>
-                      <span className="text-sm text-gray-200 truncate flex-1">{wp.name}</span>
-                      {/* 언어 */}
-                      {wp.language && (
-                        <span className="text-xs text-gray-600 flex-shrink-0">{wp.language}</span>
-                      )}
-                      {/* 상태 아이콘 */}
-                      {wp.isLoading && <Loader size={11} className="animate-spin text-gray-500 flex-shrink-0" />}
-                      {wp.quickStartDone && <CheckCircle2 size={11} className="text-green-400 flex-shrink-0" />}
-                      {wp.scanError && <AlertCircle size={11} className="text-red-400 flex-shrink-0" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : projects.length > 0 ? (
-            <div className="flex-1 overflow-y-auto min-h-0">
-              <h2 className="text-xs font-semibold text-gray-400 mb-2">프로젝트 목록</h2>
-              <div className="space-y-1">
-                {projects.map((p) => (
-                  <div
-                    key={p.id}
-                    className={`flex items-center rounded text-sm transition-colors ${
-                      currentProject?.id === p.id ? "bg-brand-700" : "bg-gray-800 hover:bg-gray-700"
-                    }`}
-                  >
-                    <button
-                      onClick={() => { setCurrentProject(p); setManualPath(p.path); setIsWorkspaceView(false); }}
-                      className="flex-1 text-left flex items-center justify-between px-3 py-2 min-w-0"
-                    >
-                      <span className="font-medium truncate">{p.name}</span>
-                      <span className="text-gray-500 text-xs ml-2 flex-shrink-0">
-                        {p.scan_result?.language ?? "?"}
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => handleDelete(p.id)}
-                      disabled={deletingId === p.id}
-                      title="삭제"
-                      className="px-2 py-2 text-gray-600 hover:text-red-400 disabled:opacity-50 transition-colors flex-shrink-0"
-                    >
-                      {deletingId === p.id
-                        ? <Loader size={13} className="animate-spin" />
-                        : <Trash2 size={13} />}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
+          {/* ─── 프로젝트 트리 목록 ─── */}
+          {projects.length > 0 && (
+            <ProjectTree
+              projects={projects}
+              currentProject={currentProject}
+              workspaceProjects={isWorkspaceView ? workspaceProjects : []}
+              workspaceRootName={isWorkspaceView ? workspaceRootName : ""}
+              deletingId={deletingId}
+              onSelect={(p) => { setCurrentProject(p); setManualPath(p.path); setIsWorkspaceView(false); }}
+              onDelete={handleDelete}
+              onWorkspaceClose={isWorkspaceView ? () => { setIsWorkspaceView(false); setWorkspaceProjects([]); setWorkspaceRootName(""); } : undefined}
+            />
+          )}
         </div>
 
         {/* ─── Right: 워크스페이스 트리 or 탭 패널 ─── */}
@@ -856,6 +793,117 @@ export function ProjectPage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── ProjectTree ────────────────────────────────────────────────
+function getParentPath(p: string) {
+  return p.replace(/\\/g, "/").split("/").slice(0, -1).join("/");
+}
+
+function ProjectTree({
+  projects,
+  currentProject,
+  workspaceProjects,
+  workspaceRootName,
+  deletingId,
+  onSelect,
+  onDelete,
+  onWorkspaceClose,
+}: {
+  projects: Project[];
+  currentProject: Project | null;
+  workspaceProjects: WorkspaceProjectState[];
+  workspaceRootName: string;
+  deletingId: string | null;
+  onSelect: (p: Project) => void;
+  onDelete: (id: string) => void;
+  onWorkspaceClose?: () => void;
+}) {
+  // 부모 경로별로 그룹화
+  const groups = new Map<string, Project[]>();
+  for (const p of projects) {
+    const parent = getParentPath(p.path);
+    if (!groups.has(parent)) groups.set(parent, []);
+    groups.get(parent)!.push(p);
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto min-h-0 space-y-1">
+      {Array.from(groups.entries()).map(([parentPath, groupProjects]) => {
+        const parentName = parentPath.split("/").pop() ?? parentPath;
+        const isWorkspaceGroup = workspaceRootName && parentName === workspaceRootName;
+        const grouped = groupProjects.length > 1;
+
+        return (
+          <div key={parentPath}>
+            {/* 그룹 헤더 (2개 이상일 때만) */}
+            {grouped && (
+              <div className="flex items-center gap-1.5 px-2 py-1 mt-1">
+                <FolderTree size={11} className="text-brand-400 flex-shrink-0" />
+                <span className="text-xs font-semibold text-gray-400 truncate flex-1">{parentName}</span>
+                {isWorkspaceGroup && onWorkspaceClose && (
+                  <button
+                    onClick={onWorkspaceClose}
+                    className="text-xs text-gray-600 hover:text-gray-400 flex-shrink-0"
+                    title="워크스페이스 닫기"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* 프로젝트 항목 */}
+            {groupProjects.map((p, idx) => {
+              const isLast = idx === groupProjects.length - 1;
+              const wp = workspaceProjects.find((w) => w.path === p.path);
+              return (
+                <div
+                  key={p.id}
+                  className={`flex items-center rounded text-sm transition-colors ${
+                    currentProject?.id === p.id ? "bg-brand-700" : "bg-gray-800 hover:bg-gray-700"
+                  }`}
+                >
+                  {grouped && (
+                    <span className="pl-3 text-gray-700 font-mono text-xs flex-shrink-0 select-none">
+                      {isLast ? "└" : "├"}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => {
+                      onSelect(p);
+                      if (wp) {
+                        const el = document.getElementById(`ws-card-${wp.path}`);
+                        el?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }
+                    }}
+                    className="flex-1 text-left flex items-center gap-2 px-2 py-2 min-w-0"
+                  >
+                    <span className="font-medium truncate flex-1">{p.name}</span>
+                    <span className="text-gray-500 text-xs flex-shrink-0">
+                      {p.scan_result?.language ?? "?"}
+                    </span>
+                    {/* 워크스페이스 상태 */}
+                    {wp?.isLoading && <Loader size={11} className="animate-spin text-gray-500 flex-shrink-0" />}
+                    {wp?.quickStartDone && <CheckCircle2 size={11} className="text-green-400 flex-shrink-0" />}
+                    {wp?.scanError && <AlertCircle size={11} className="text-red-400 flex-shrink-0" />}
+                  </button>
+                  <button
+                    onClick={() => onDelete(p.id)}
+                    disabled={deletingId === p.id}
+                    title="삭제"
+                    className="px-2 py-2 text-gray-600 hover:text-red-400 disabled:opacity-50 transition-colors flex-shrink-0"
+                  >
+                    {deletingId === p.id ? <Loader size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
     </div>
   );
 }

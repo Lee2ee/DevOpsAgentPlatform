@@ -832,9 +832,51 @@ function getCommonRoot(paths: string[]): string | null {
     } else break;
   }
   const joined = common.join("/");
-  // 드라이브 문자만이거나 빈 경우는 의미 없음
   if (!joined || /^[A-Za-z]:$/.test(joined) || joined === "/") return null;
   return joined;
+}
+
+/** 프로젝트 배열을 공통 조상 경로로 클러스터링해 그룹으로 반환. */
+function groupProjects(projects: Project[]): { rootName: string; items: Project[] }[] {
+  if (projects.length === 0) return [];
+
+  const norm = (p: string) => p.replace(/\\/g, "/");
+  const allPaths = projects.map((p) => norm(p.path));
+
+  // 모든 프로젝트가 단일 공통 조상을 가지면 하나의 그룹
+  const singleRoot = getCommonRoot(allPaths);
+  if (singleRoot) {
+    return [{ rootName: singleRoot.split("/").pop() ?? singleRoot, items: projects }];
+  }
+
+  // 드라이브/경로가 달라 공통 조상이 없으면 → 클러스터링
+  const visited = new Set<number>();
+  const groups: { rootName: string; items: Project[] }[] = [];
+
+  for (let i = 0; i < projects.length; i++) {
+    if (visited.has(i)) continue;
+    const cluster: number[] = [i];
+    visited.add(i);
+
+    for (let j = i + 1; j < projects.length; j++) {
+      if (visited.has(j)) continue;
+      const clusterPaths = cluster.map((k) => allPaths[k]);
+      if (getCommonRoot([...clusterPaths, allPaths[j]])) {
+        cluster.push(j);
+        visited.add(j);
+      }
+    }
+
+    const clusterProjects = cluster.map((k) => projects[k]);
+    const clusterPaths = cluster.map((k) => allPaths[k]);
+    const root = getCommonRoot(clusterPaths);
+    const rootName = root
+      ? (root.split("/").pop() ?? root)
+      : (allPaths[cluster[0]].split("/").at(-2) ?? "프로젝트");
+    groups.push({ rootName, items: clusterProjects });
+  }
+
+  return groups;
 }
 
 function ProjectTree({
@@ -917,34 +959,60 @@ function ProjectTree({
     );
   }
 
-  // ── 일반 모드: 모든 projects의 공통 조상 경로로 그룹화 ──
-  const normalizedPaths = projects.map((p) => p.path.replace(/\\/g, "/"));
-  const commonRoot = getCommonRoot(normalizedPaths);
-  const rootName = commonRoot ? commonRoot.split("/").pop() ?? commonRoot : null;
-  const grouped = rootName !== null && projects.length > 1;
+  // ── 일반 모드: 경로 클러스터별 트리, 단독 프로젝트는 그대로 ──
+  const groups = groupProjects(projects);
+  const isGrouped = groups.length > 1 || (groups.length === 1 && projects.length > 1);
 
   return (
     <div className="flex-1 overflow-y-auto min-h-0">
-      {grouped && (
-        <div className="flex items-center gap-1.5 px-2 py-1.5 mt-1 mb-0.5">
-          <FolderTree size={11} className="text-brand-400 flex-shrink-0" />
-          <span className="text-xs font-semibold text-gray-300 truncate flex-1">{rootName}</span>
-        </div>
-      )}
-      {projects.map((p, idx) => {
-        const isLast = idx === projects.length - 1;
-        return (
+      {isGrouped ? (
+        groups.map((grp) => (
+          <div key={grp.rootName} className="mb-1">
+            <div className="flex items-center gap-1.5 px-2 py-1.5 mt-1">
+              <FolderTree size={11} className="text-brand-400 flex-shrink-0" />
+              <span className="text-xs font-semibold text-gray-300 truncate flex-1">{grp.rootName}</span>
+            </div>
+            {grp.items.map((p, idx) => {
+              const isLast = idx === grp.items.length - 1;
+              return (
+                <div
+                  key={p.id}
+                  className={`flex items-center rounded text-sm transition-colors ${
+                    currentProject?.id === p.id ? "bg-brand-700" : "hover:bg-gray-700"
+                  }`}
+                >
+                  <span className="pl-3 text-gray-700 font-mono text-xs flex-shrink-0 select-none">
+                    {isLast ? "└" : "├"}
+                  </span>
+                  <button
+                    onClick={() => onSelect(p)}
+                    className="flex-1 text-left flex items-center gap-2 px-2 py-2 min-w-0"
+                  >
+                    <span className="font-medium truncate flex-1">{p.name}</span>
+                    <span className="text-gray-500 text-xs flex-shrink-0">{p.scan_result?.language ?? "?"}</span>
+                  </button>
+                  <button
+                    onClick={() => onDelete(p.id)}
+                    disabled={deletingId === p.id}
+                    title="삭제"
+                    className="px-2 py-2 text-gray-600 hover:text-red-400 disabled:opacity-50 transition-colors flex-shrink-0"
+                  >
+                    {deletingId === p.id ? <Loader size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ))
+      ) : (
+        // 단독 프로젝트: 그대로 표시
+        projects.map((p) => (
           <div
             key={p.id}
             className={`flex items-center rounded text-sm transition-colors ${
-              currentProject?.id === p.id ? "bg-brand-700" : "bg-gray-800 hover:bg-gray-700"
+              currentProject?.id === p.id ? "bg-brand-700" : "hover:bg-gray-700"
             }`}
           >
-            {grouped && (
-              <span className="pl-3 text-gray-700 font-mono text-xs flex-shrink-0 select-none">
-                {isLast ? "└" : "├"}
-              </span>
-            )}
             <button
               onClick={() => onSelect(p)}
               className="flex-1 text-left flex items-center gap-2 px-2 py-2 min-w-0"
@@ -961,8 +1029,8 @@ function ProjectTree({
               {deletingId === p.id ? <Loader size={13} className="animate-spin" /> : <Trash2 size={13} />}
             </button>
           </div>
-        );
-      })}
+        ))
+      )}
     </div>
   );
 }

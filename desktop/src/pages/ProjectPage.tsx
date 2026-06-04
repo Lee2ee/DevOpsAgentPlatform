@@ -645,7 +645,12 @@ export function ProjectPage() {
                           {quickStartDone ? (
                             <div className="flex items-center gap-2 text-green-400 text-sm">
                               <CheckCircle2 size={16} />
-                              완료! Docker + CI/CD 파일이 프로젝트에 저장됐습니다.
+                              {(() => {
+                                const combo = recommendation.combos.find((c) => c.id === selectedComboId);
+                                return combo
+                                  ? `완료! ${combo.deploy_name} + ${combo.cicd_name} 파일이 저장됐습니다.`
+                                  : "완료! 배포 파일이 프로젝트에 저장됐습니다.";
+                              })()}
                               <button onClick={() => setTab("docker")} className="ml-auto text-xs text-brand-400 hover:text-brand-300">
                                 Docker 확인 →
                               </button>
@@ -1177,7 +1182,8 @@ function WorkspaceProjectCard({
       <div className="mt-3">
         {wp.quickStartDone ? (
           <div className="flex items-center gap-1.5 text-green-400 text-xs">
-            <CheckCircle2 size={13} /> Docker + CI/CD 파일 저장 완료
+            <CheckCircle2 size={13} />
+            {topCombo ? `완료! ${topCombo.deploy_name} + ${topCombo.cicd_name}` : "배포 파일 저장 완료"}
           </div>
         ) : wp.quickStartStep ? (
           <div className="flex items-center gap-1.5 text-gray-400 text-xs">

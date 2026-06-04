@@ -213,6 +213,9 @@ export function ProjectPage() {
     }
   };
 
+  // 페이지 진입 시 프로젝트 목록 로드
+  useEffect(() => { loadProjects(); }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+
   // 프로젝트 변경 시 초기화 + 추천 즉시 로드
   useEffect(() => {
     setRecommendation(null);
@@ -488,11 +491,15 @@ export function ProjectPage() {
               workspaceProjects={workspaceProjects}
               isWorkspaceView={isWorkspaceView}
               deletingId={deletingId}
-              onSelect={(p) => { setCurrentProject(p); setManualPath(p.path); }}
+              onSelect={(p) => { setCurrentProject(p); setManualPath(p.path); setIsWorkspaceView(false); setWorkspaceProjects([]); }}
               onDelete={handleDelete}
               onWorkspaceRootClick={workspace ? handleWorkspaceRootClick : undefined}
               onSubprojectClick={workspace ? handleScanSubproject : undefined}
               onWorkspaceClose={workspace ? () => { setWorkspace(null); setIsWorkspaceView(false); setWorkspaceProjects([]); } : undefined}
+              onGroupRootClick={(rootName, items) => {
+                const subs: SubProjectInfo[] = items.map((p) => ({ path: p.path, rel_path: p.name, name: p.name, build_file: "" }));
+                doAllInOneWorkspace(rootName, subs);
+              }}
             />
           )}
         </div>
@@ -502,7 +509,7 @@ export function ProjectPage() {
           {isWorkspaceView ? (
             <WorkspaceAllInOnePanel
               projects={workspaceProjects}
-              onClose={() => { setIsWorkspaceView(false); setWorkspaceProjects([]); setWorkspaceRootName(""); }}
+              onClose={() => { setIsWorkspaceView(false); setWorkspaceProjects([]); }}
               onQuickStart={handleWorkspaceProjectQuickStart}
             />
           ) : currentProject ? (
@@ -837,21 +844,28 @@ function getCommonRoot(paths: string[]): string | null {
 }
 
 /** 프로젝트 배열을 공통 조상 경로로 클러스터링해 그룹으로 반환. */
-function groupProjects(projects: Project[]): { rootName: string; items: Project[] }[] {
+function groupProjects(projects: Project[]): { rootName: string; rootPath: string; items: Project[] }[] {
   if (projects.length === 0) return [];
 
   const norm = (p: string) => p.replace(/\\/g, "/");
   const allPaths = projects.map((p) => norm(p.path));
 
+  const makeGroup = (rootPath: string, items: Project[]) => ({
+    rootName: rootPath.split("/").pop() ?? rootPath,
+    rootPath,
+    // 루트 경로 자체와 일치하는 프로젝트는 자식에서 제외 (중복 방지)
+    items: items.filter((p) => norm(p.path) !== rootPath),
+  });
+
   // 모든 프로젝트가 단일 공통 조상을 가지면 하나의 그룹
   const singleRoot = getCommonRoot(allPaths);
   if (singleRoot) {
-    return [{ rootName: singleRoot.split("/").pop() ?? singleRoot, items: projects }];
+    return [makeGroup(singleRoot, projects)];
   }
 
   // 드라이브/경로가 달라 공통 조상이 없으면 → 클러스터링
   const visited = new Set<number>();
-  const groups: { rootName: string; items: Project[] }[] = [];
+  const groups: { rootName: string; rootPath: string; items: Project[] }[] = [];
 
   for (let i = 0; i < projects.length; i++) {
     if (visited.has(i)) continue;
@@ -869,11 +883,8 @@ function groupProjects(projects: Project[]): { rootName: string; items: Project[
 
     const clusterProjects = cluster.map((k) => projects[k]);
     const clusterPaths = cluster.map((k) => allPaths[k]);
-    const root = getCommonRoot(clusterPaths);
-    const rootName = root
-      ? (root.split("/").pop() ?? root)
-      : (allPaths[cluster[0]].split("/").at(-2) ?? "프로젝트");
-    groups.push({ rootName, items: clusterProjects });
+    const root = getCommonRoot(clusterPaths) ?? allPaths[cluster[0]].split("/").slice(0, -1).join("/");
+    groups.push(makeGroup(root, clusterProjects));
   }
 
   return groups;
@@ -891,6 +902,7 @@ function ProjectTree({
   onWorkspaceRootClick,
   onSubprojectClick,
   onWorkspaceClose,
+  onGroupRootClick,
 }: {
   projects: Project[];
   currentProject: Project | null;
@@ -903,6 +915,7 @@ function ProjectTree({
   onWorkspaceRootClick?: () => void;
   onSubprojectClick?: (path: string) => void;
   onWorkspaceClose?: () => void;
+  onGroupRootClick?: (rootName: string, items: Project[]) => void;
 }) {
   // ── 워크스페이스 모드: 폴더 선택 후 트리 표시 ──
   if (workspace) {
@@ -961,16 +974,21 @@ function ProjectTree({
 
   // ── 일반 모드: 경로 클러스터별 트리, 단독 프로젝트는 그대로 ──
   const groups = groupProjects(projects);
-  const isGrouped = groups.length > 1 || (groups.length === 1 && projects.length > 1);
+  // 자식이 1개 이상인 그룹이 있으면 트리 표시
+  const isGrouped = groups.some((g) => g.items.length > 0);
 
   return (
     <div className="flex-1 overflow-y-auto min-h-0">
       {isGrouped ? (
         groups.map((grp) => (
           <div key={grp.rootName} className="mb-1">
-            <div className="flex items-center gap-1.5 px-2 py-1.5 mt-1">
+            <div
+              onClick={() => onGroupRootClick?.(grp.rootName, grp.items)}
+              className="flex items-center gap-1.5 px-2 py-1.5 mt-1 rounded cursor-pointer hover:bg-gray-700 transition-colors"
+            >
               <FolderTree size={11} className="text-brand-400 flex-shrink-0" />
               <span className="text-xs font-semibold text-gray-300 truncate flex-1">{grp.rootName}</span>
+              <span className="text-xs text-gray-600 flex-shrink-0">{grp.items.length}</span>
             </div>
             {grp.items.map((p, idx) => {
               const isLast = idx === grp.items.length - 1;
@@ -1035,6 +1053,7 @@ function ProjectTree({
   );
 }
 
+
 // ── WorkspaceAllInOnePanel ──────────────────────────────────────
 function WorkspaceAllInOnePanel({
   projects,
@@ -1078,8 +1097,11 @@ function WorkspaceProjectCard({
   wp: WorkspaceProjectState;
   onQuickStart: (path: string) => void;
 }) {
+  const { projects } = useProjectStore();
+  const sr = projects.find((p) => p.path === wp.path)?.scan_result ?? null;
   const rec = wp.recommendation;
   const topCombo = rec?.combos.find((c) => c.recommended) ?? rec?.combos[0];
+  const infra = [...(sr?.database ?? []), ...(sr?.cache ?? []), ...(sr?.message_queue ?? [])];
 
   return (
     <div id={`ws-card-${wp.path}`} className="bg-gray-800 rounded-lg p-4">
@@ -1087,46 +1109,53 @@ function WorkspaceProjectCard({
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="font-semibold text-gray-100 truncate">{wp.name}</span>
-          {(wp.language || wp.framework) && (
-            <span className="text-xs text-gray-500 flex-shrink-0">
-              {[wp.language, wp.framework].filter(Boolean).join(" · ")}
-            </span>
-          )}
+          <div className="flex gap-1">
+            {wp.language && <span className="text-xs bg-gray-700 text-gray-300 rounded px-1.5 py-0.5">{wp.language}</span>}
+            {wp.framework && <span className="text-xs bg-brand-900/50 text-brand-400 rounded px-1.5 py-0.5">{wp.framework}</span>}
+          </div>
         </div>
         {rec && (
           <span className={`px-2 py-0.5 rounded-full text-xs font-bold flex-shrink-0 ml-2 ${
-            rec.scale === "small"      ? "bg-green-900 text-green-300" :
-            rec.scale === "medium"     ? "bg-blue-900 text-blue-300" :
-            rec.scale === "large"      ? "bg-orange-900 text-orange-300" :
-                                         "bg-red-900 text-red-300"
+            rec.scale === "small"  ? "bg-green-900 text-green-300" :
+            rec.scale === "medium" ? "bg-blue-900 text-blue-300" :
+            rec.scale === "large"  ? "bg-orange-900 text-orange-300" :
+                                     "bg-red-900 text-red-300"
           }`}>{rec.scale_label}</span>
         )}
       </div>
 
       {/* 로딩 / 에러 */}
       {wp.isLoading && (
-        <div className="flex items-center gap-2 text-gray-500 text-xs mt-1">
+        <div className="flex items-center gap-2 text-gray-500 text-xs">
           <Loader size={12} className="animate-spin" /> 스캔 및 분석 중...
         </div>
       )}
       {wp.scanError && (
-        <div className="text-red-400 text-xs flex items-center gap-1 mt-1">
+        <div className="text-red-400 text-xs flex items-center gap-1">
           <AlertCircle size={12} /> {wp.scanError}
+        </div>
+      )}
+
+      {/* 스캔 상세 */}
+      {sr && !wp.isLoading && (
+        <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs mt-1.5 mb-2">
+          {sr.build_tool && <span className="text-gray-500">빌드 <span className="text-gray-300">{sr.build_tool}</span></span>}
+          {infra.length > 0 && <span className="text-gray-500">인프라 <span className="text-gray-300">{infra.join(", ")}</span></span>}
+          <span className="text-gray-500">Docker <span className={sr.existing_docker ? "text-green-400" : "text-gray-600"}>{sr.existing_docker ? "있음" : "없음"}</span></span>
+          {sr.existing_cicd !== "none" && <span className="text-gray-500">CI/CD <span className="text-brand-300">{sr.existing_cicd}</span></span>}
         </div>
       )}
 
       {/* 추천 조합 */}
       {topCombo && (
-        <div className="mt-2 space-y-1">
+        <div className="mt-1 space-y-0.5 border-t border-gray-700 pt-2">
           <div className="flex items-center gap-1.5">
             <span className="text-sm font-medium text-gray-200">{topCombo.deploy_name}</span>
             <span className="text-gray-600 text-xs">+</span>
             <span className="text-sm font-medium text-brand-300">{topCombo.cicd_name}</span>
           </div>
           <div className="flex items-center gap-3 text-xs">
-            {topCombo.traffic_capacity && (
-              <span className="text-cyan-400/80">⇅ {topCombo.traffic_capacity}</span>
-            )}
+            {topCombo.traffic_capacity && <span className="text-cyan-400/80">⇅ {topCombo.traffic_capacity}</span>}
             <span className="text-gray-500">{topCombo.estimated_cost}</span>
           </div>
           <p className="text-xs text-gray-500 line-clamp-1">⚡ {topCombo.synergy}</p>

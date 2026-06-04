@@ -1,0 +1,37 @@
+# ── Builder Stage ──────────────────────────────────────────────
+FROM python:{{ python_version }}-slim AS builder
+WORKDIR /app
+{% if has_requirements %}
+COPY requirements*.txt ./
+RUN pip install --user --no-cache-dir -r requirements.txt
+{% elif pyproject_deps %}
+RUN pip install --user --no-cache-dir \
+{% for dep in pyproject_deps %}
+{% if not loop.last %}
+    "{{ dep }}" \
+{% else %}
+    "{{ dep }}"
+{% endif %}
+{% endfor %}
+{% endif %}
+
+# ── Runtime Stage ──────────────────────────────────────────────
+FROM python:{{ python_version }}-slim
+RUN groupadd --system app && useradd --system --gid app app
+WORKDIR /app
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+COPY . .
+EXPOSE {{ port }}
+USER app
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:{{ port }}/health')" 2>/dev/null || exit 1
+{% if framework == 'fastapi' %}
+CMD ["uvicorn", "{{ app_module }}:app", "--host", "0.0.0.0", "--port", "{{ port }}"]
+{% elif framework == 'django' %}
+CMD ["gunicorn", "{{ app_module }}.wsgi:application", "--bind", "0.0.0.0:{{ port }}"]
+{% elif framework == 'flask' %}
+CMD ["gunicorn", "{{ app_module }}:app", "--bind", "0.0.0.0:{{ port }}"]
+{% else %}
+CMD ["python", "-m", "{{ app_module }}"]
+{% endif %}

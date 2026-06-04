@@ -1,0 +1,140 @@
+pipeline {
+    agent any
+
+    environment {
+        APP_NAME    = '{{ app_name }}'
+        REGISTRY    = '{% if registry %}{{ registry }}{% else %}registry.example.com{% endif %}'
+        IMAGE_NAME  = "${REGISTRY}/${APP_NAME}"
+        SERVER_HOST = credentials('server-host')
+        SERVER_USER = credentials('server-user')
+    }
+
+    options {
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+{% if language == 'java' or language == 'kotlin' %}
+        stage('Test') {
+            steps {
+                sh '{{ test_command }}'
+            }
+            post {
+                always {
+{% if build_tool == 'gradle' %}
+                    junit 'build/test-results/test/*.xml'
+{% else %}
+                    junit 'target/surefire-reports/*.xml'
+{% endif %}
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh '{{ build_command }}'
+            }
+        }
+
+{% elif language in ('javascript', 'typescript') %}
+        stage('Test') {
+            steps {
+                sh '''
+                    {{ pkg_install_command }}
+                    {{ test_command }}
+                '''
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh '''
+                    {{ pkg_install_command }}
+                    {{ build_command }}
+                '''
+            }
+        }
+
+{% elif language == 'python' %}
+        stage('Test') {
+            steps {
+                sh '''
+                    {{ pkg_install_command }}
+                    {{ test_command }}
+                '''
+            }
+        }
+
+        stage('Build') {
+            steps {
+                echo 'Python application ready'
+            }
+        }
+
+{% endif %}
+        stage('Docker Build & Push') {
+            steps {
+                script {
+                    docker.withRegistry("https://${REGISTRY}", 'registry-credentials') {
+                        def image = docker.build("${IMAGE_NAME}:${BUILD_NUMBER}")
+                        image.push("${BUILD_NUMBER}")
+                        image.push('latest')
+                    }
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sshagent(['deploy-ssh-key']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${SERVER_USER}@${SERVER_HOST} '
+                            set -e
+                            cd /app
+                            docker pull ${IMAGE_NAME}:${BUILD_NUMBER}
+                            IMAGE_TAG=${BUILD_NUMBER} docker-compose up -d
+                            sleep 15
+                            curl -sf http://localhost:{{ port }}/{% if framework == 'springboot' %}actuator/health{% else %}health{% endif %}
+                            echo "배포 성공: ${IMAGE_NAME}:${BUILD_NUMBER}"
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                retry(3) {
+                    sleep 10
+                    sh "curl -sf http://${SERVER_HOST}:{{ port }}/{% if framework == 'springboot' %}actuator/health{% else %}health{% endif %}"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ 배포 성공: ${IMAGE_NAME}:${BUILD_NUMBER}"
+{% if notify_slack %}
+            slackSend(color: 'good', message: "✅ ${APP_NAME} 배포 성공 (Build #${BUILD_NUMBER})")
+{% endif %}
+        }
+        failure {
+            echo "❌ 배포 실패: ${IMAGE_NAME}:${BUILD_NUMBER}"
+{% if notify_slack %}
+            slackSend(color: 'danger', message: "❌ ${APP_NAME} 배포 실패 (Build #${BUILD_NUMBER})")
+{% endif %}
+        }
+        always {
+            cleanWs()
+        }
+    }
+}

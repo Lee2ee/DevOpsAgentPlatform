@@ -1,0 +1,86 @@
+{% if has_build %}
+# ── Build Stage ────────────────────────────────────────────────
+FROM node:{{ node_version }}-alpine AS build
+WORKDIR /app
+{% if pkg_manager == "yarn" %}
+COPY package.json {% if has_lock %}yarn.lock {% endif %}./
+{% if has_lock %}
+RUN yarn install --frozen-lockfile
+{% else %}
+RUN yarn install
+{% endif %}
+{% elif pkg_manager == "pnpm" %}
+COPY package.json {% if has_lock %}pnpm-lock.yaml {% endif %}./
+{% if has_lock %}
+RUN corepack enable && pnpm install --frozen-lockfile
+{% else %}
+RUN corepack enable && pnpm install
+{% endif %}
+{% else %}
+COPY package*.json ./
+{% if has_lock %}
+RUN npm ci
+{% else %}
+RUN npm install
+{% endif %}
+{% endif %}
+COPY . .
+RUN {{ pkg_manager }} run build
+
+# ── Runtime Stage ──────────────────────────────────────────────
+FROM node:{{ node_version }}-alpine
+RUN addgroup -S app && adduser -S app -G app
+WORKDIR /app
+{% if pkg_manager == "yarn" %}
+COPY package.json {% if has_lock %}yarn.lock {% endif %}./
+RUN yarn install{% if not has_lock %}{% else %} --frozen-lockfile{% endif %} --production
+{% elif pkg_manager == "pnpm" %}
+COPY package.json {% if has_lock %}pnpm-lock.yaml {% endif %}./
+RUN corepack enable && pnpm install{% if not has_lock %}{% else %} --frozen-lockfile{% endif %} --prod
+{% else %}
+COPY package*.json ./
+{% if has_lock %}
+RUN npm ci --omit=dev
+{% else %}
+RUN npm install --omit=dev
+{% endif %}
+{% endif %}
+COPY --from=build /app/dist ./dist
+EXPOSE {{ port }}
+USER app
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget -qO- http://localhost:{{ port }}/health 2>/dev/null || exit 1
+CMD ["node", "{{ entry_point }}"]
+
+{% else %}
+# ── Dependencies Stage ─────────────────────────────────────────
+FROM node:{{ node_version }}-alpine AS deps
+WORKDIR /app
+{% if pkg_manager == "yarn" %}
+COPY package.json {% if has_lock %}yarn.lock {% endif %}./
+RUN yarn install{% if not has_lock %}{% else %} --frozen-lockfile{% endif %} --production
+{% elif pkg_manager == "pnpm" %}
+COPY package.json {% if has_lock %}pnpm-lock.yaml {% endif %}./
+RUN corepack enable && pnpm install{% if not has_lock %}{% else %} --frozen-lockfile{% endif %} --prod
+{% else %}
+COPY package*.json ./
+{% if has_lock %}
+RUN npm ci --omit=dev
+{% else %}
+RUN npm install --omit=dev
+{% endif %}
+{% endif %}
+
+# ── Runtime Stage ──────────────────────────────────────────────
+FROM node:{{ node_version }}-alpine
+RUN addgroup -S app && adduser -S app -G app
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY package*.json ./
+COPY . .
+EXPOSE {{ port }}
+USER app
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget -qO- http://localhost:{{ port }}/health 2>/dev/null || exit 1
+CMD ["node", "{{ entry_point }}"]
+{% endif %}

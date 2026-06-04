@@ -1,0 +1,36 @@
+# Excluded docs
+CLAUDE.md
+CREATE.md
+TODO.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+*.db
+
+# Node / Desktop
+node_modules/
+desktop/dist/
+desktop/build/
+
+# Rust build artifacts
+target/
+
+# Kotlin / IntelliJ Plugin
+.gradle/
+plugins/intellij/build/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets / IDE
+*.env
+.env.*
+vault.db
+.idea/
+.claude/

@@ -1,0 +1,31 @@
+# ── Build Stage ────────────────────────────────────────────────
+{% if has_wrapper %}
+FROM eclipse-temurin:{{ java_version }}-jdk-alpine AS build
+{% else %}
+FROM maven:3.9-eclipse-temurin-{{ java_version }}-alpine AS build
+{% endif %}
+WORKDIR /app
+
+{% if has_wrapper %}
+COPY .mvn/ .mvn/
+COPY mvnw pom.xml ./
+RUN chmod +x mvnw && ./mvnw dependency:go-offline -q
+COPY src ./src
+RUN ./mvnw package -DskipTests -q
+{% else %}
+COPY pom.xml .
+RUN mvn dependency:go-offline -q
+COPY src ./src
+RUN mvn package -DskipTests -q
+{% endif %}
+
+# ── Runtime Stage ──────────────────────────────────────────────
+FROM eclipse-temurin:{{ java_version }}-jre-alpine
+RUN addgroup -S app && adduser -S app -G app
+WORKDIR /app
+COPY --from=build /app/target/*.jar app.jar
+EXPOSE {{ port }}
+USER app
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD wget -qO- http://localhost:{{ port }}/actuator/health 2>/dev/null || exit 1
+ENTRYPOINT ["java", "-jar", "app.jar"]

@@ -1,0 +1,100 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [ "{{ branch }}" ]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: {{ app_name }}
+  REGISTRY: {% if registry %}{{ registry }}{% else %}ghcr.io/${{ '{{' }} github.repository_owner {{ '}}' }}{% endif %}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+{% if language == 'java' or language == 'kotlin' %}
+      - name: Set up JDK {{ language_version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: '{{ language_version }}'
+          distribution: 'temurin'
+          cache: '{{ build_tool }}'
+
+{% elif language in ('javascript', 'typescript') %}
+      - name: Set up Node.js {{ language_version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '{{ language_version }}'
+          cache: '{{ build_tool }}'
+
+{% elif language == 'python' %}
+      - name: Set up Python {{ language_version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '{{ language_version }}'
+          cache: 'pip'
+
+{% endif %}
+      - name: Run Tests
+        run: {{ test_command }}
+
+      - name: Build
+        run: {{ build_command }}
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+{% if registry %}
+          registry: {{ registry }}
+          username: ${{ '{{' }} secrets.REGISTRY_USERNAME {{ '}}' }}
+          password: ${{ '{{' }} secrets.REGISTRY_PASSWORD {{ '}}' }}
+{% else %}
+          registry: ghcr.io
+          username: ${{ '{{' }} github.actor {{ '}}' }}
+          password: ${{ '{{' }} secrets.GITHUB_TOKEN {{ '}}' }}
+{% endif %}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ '{{' }} env.REGISTRY {{ '}}' }}/${{ '{{' }} env.IMAGE_NAME {{ '}}' }}:${{ '{{' }} github.sha {{ '}}' }}
+            ${{ '{{' }} env.REGISTRY {{ '}}' }}/${{ '{{' }} env.IMAGE_NAME {{ '}}' }}:latest
+
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ '{{' }} secrets.SERVER_HOST {{ '}}' }}
+          username: ${{ '{{' }} secrets.SERVER_USER {{ '}}' }}
+          key: ${{ '{{' }} secrets.SERVER_SSH_KEY {{ '}}' }}
+          script: |
+            set -e
+            cd /app
+            echo "${{ '{{' }} secrets.REGISTRY_PASSWORD || secrets.GITHUB_TOKEN {{ '}}' }}" | \
+              docker login ${{ '{{' }} env.REGISTRY {{ '}}' }} -u ${{ '{{' }} secrets.REGISTRY_USERNAME || github.actor {{ '}}' }} --password-stdin
+            docker pull ${{ '{{' }} env.REGISTRY {{ '}}' }}/${{ '{{' }} env.IMAGE_NAME {{ '}}' }}:${{ '{{' }} github.sha {{ '}}' }}
+            IMAGE_TAG=${{ '{{' }} github.sha {{ '}}' }} docker-compose up -d
+            sleep 15
+            curl -sf http://localhost:{{ port }}/{% if framework == 'springboot' %}actuator/health{% else %}health{% endif %} || exit 1
+            echo "배포 성공: ${{ '{{' }} env.IMAGE_NAME {{ '}}' }}:${{ '{{' }} github.sha {{ '}}' }}"
+{% if notify_slack %}
+
+      - name: Notify Slack
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ '{{' }} job.status {{ '}}' }}
+          fields: repo,message,commit,author
+        env:
+          SLACK_WEBHOOK_URL: ${{ '{{' }} secrets.SLACK_WEBHOOK {{ '}}' }}
+{% endif %}

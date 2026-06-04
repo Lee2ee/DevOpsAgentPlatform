@@ -1,0 +1,115 @@
+trigger:
+  branches:
+    include:
+      - {{ branch }}
+
+variables:
+  appName: '{{ app_name }}'
+  imageRepository: '{{ app_name }}'
+  containerRegistry: '{% if registry %}{{ registry }}{% else %}$(REGISTRY_URL){% endif %}'
+  dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
+  tag: '$(Build.BuildId)'
+
+stages:
+  - stage: Test
+    displayName: Test
+    jobs:
+      - job: Test
+        displayName: Run Tests
+{% if language == 'java' or language == 'kotlin' %}
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: JavaToolInstaller@0
+            inputs:
+              versionSpec: '{{ language_version }}'
+              jdkArchitectureOption: 'x64'
+              jdkSourceOption: 'PreInstalled'
+          - script: {{ test_command }}
+            displayName: 'Run Tests'
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFormat: 'JUnit'
+{% if build_tool == 'gradle' %}
+              testResultsFiles: 'build/test-results/test/*.xml'
+{% else %}
+              testResultsFiles: 'target/surefire-reports/*.xml'
+{% endif %}
+
+{% elif language in ('javascript', 'typescript') %}
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '{{ language_version }}'
+          - script: |
+              {{ pkg_install_command }}
+              {{ test_command }}
+            displayName: 'Install and Test'
+
+{% elif language == 'python' %}
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '{{ language_version }}'
+          - script: |
+              {{ pkg_install_command }}
+              {{ test_command }}
+            displayName: 'Install and Test'
+
+{% endif %}
+  - stage: Build
+    displayName: Build and Push
+    dependsOn: Test
+    jobs:
+      - job: BuildPush
+        displayName: Docker Build & Push
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Docker@2
+            displayName: Login to Registry
+            inputs:
+              command: login
+              containerRegistry: 'container-registry-service-connection'
+
+          - task: Docker@2
+            displayName: Build and Push
+            inputs:
+              command: buildAndPush
+              repository: $(imageRepository)
+              dockerfile: $(dockerfilePath)
+              containerRegistry: 'container-registry-service-connection'
+              tags: |
+                $(tag)
+                latest
+
+  - stage: Deploy
+    displayName: Deploy to Production
+    dependsOn: Build
+    jobs:
+      - deployment: Deploy
+        displayName: SSH Deploy
+        environment: production
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: SSH@0
+                  displayName: Deploy via SSH
+                  inputs:
+                    sshEndpoint: 'production-server-connection'
+                    runOptions: 'inline'
+                    inline: |
+                      set -e
+                      cd /app
+                      docker pull $(containerRegistry)/$(imageRepository):$(tag)
+                      IMAGE_TAG=$(tag) docker-compose up -d
+                      sleep 15
+                      curl -sf http://localhost:{{ port }}/{% if framework == 'springboot' %}actuator/health{% else %}health{% endif %}
+                      echo "배포 성공: $(imageRepository):$(tag)"

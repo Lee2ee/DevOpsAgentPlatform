@@ -1,0 +1,31 @@
+# ── Build Stage ────────────────────────────────────────────────
+{% if has_wrapper %}
+FROM eclipse-temurin:{{ java_version }}-jdk-alpine AS build
+{% else %}
+FROM gradle:8-eclipse-temurin-{{ java_version }}-alpine AS build
+{% endif %}
+WORKDIR /app
+
+{% if has_wrapper %}
+COPY gradle/ gradle/
+COPY gradlew build.gradle* settings.gradle* ./
+RUN chmod +x gradlew && ./gradlew dependencies -q
+COPY src ./src
+RUN ./gradlew bootJar -x test -q
+{% else %}
+COPY build.gradle* settings.gradle* ./
+RUN gradle dependencies -q
+COPY src ./src
+RUN gradle bootJar -x test -q
+{% endif %}
+
+# ── Runtime Stage ──────────────────────────────────────────────
+FROM eclipse-temurin:{{ java_version }}-jre-alpine
+RUN addgroup -S app && adduser -S app -G app
+WORKDIR /app
+COPY --from=build /app/build/libs/*.jar app.jar
+EXPOSE {{ port }}
+USER app
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD wget -qO- http://localhost:{{ port }}/actuator/health 2>/dev/null || exit 1
+ENTRYPOINT ["java", "-jar", "app.jar"]

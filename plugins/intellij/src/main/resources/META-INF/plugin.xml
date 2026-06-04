@@ -1,0 +1,78 @@
+<idea-plugin>
+    <id>com.aidevops.intellij</id>
+    <name>AI DevOps</name>
+    <vendor email="support@aidevops.io" url="https://github.com/aidevops">AIDevOps</vendor>
+    <description><![CDATA[
+        AI-powered DevOps automation for IntelliJ IDEA.<br/>
+        <ul>
+          <li>프로젝트 자동 분석 (언어/프레임워크/DB 탐지)</li>
+          <li>Dockerfile / docker-compose.yml 자동 생성</li>
+          <li>GitHub Actions / GitLab CI / Jenkins 파이프라인 생성</li>
+          <li>SSH 원격 배포 (실시간 로그 스트리밍)</li>
+          <li>장애 분석 및 자동 수정 제안</li>
+        </ul>
+        Core Engine(127.0.0.1:8765)이 실행 중이어야 합니다.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <notificationGroup id="AI DevOps" displayType="BALLOON" isLogByDefault="true"/>
+        <toolWindow
+            id="AI DevOps"
+            anchor="right"
+            secondary="false"
+            icon="/icons/toolwindow.svg"
+            factoryClass="com.aidevops.intellij.toolwindow.AiDevOpsToolWindowFactory"/>
+
+        <applicationConfigurable
+            parentId="tools"
+            instance="com.aidevops.intellij.settings.AiDevOpsConfigurable"
+            id="com.aidevops.intellij.settings.AiDevOpsConfigurable"
+            displayName="AI DevOps"/>
+
+        <applicationService
+            serviceImplementation="com.aidevops.intellij.settings.AiDevOpsSettings"/>
+
+        <projectService
+            serviceImplementation="com.aidevops.intellij.service.CoreEngineService"/>
+    </extensions>
+
+    <actions>
+        <group id="AiDevOpsGroup" text="AI DevOps" popup="true" icon="/icons/action.svg">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+
+            <action id="AiDevOps.ScanProject"
+                    class="com.aidevops.intellij.actions.ScanProjectAction"
+                    text="Scan Project"
+                    description="프로젝트를 AI로 분석합니다"/>
+
+            <separator/>
+
+            <action id="AiDevOps.GenerateDocker"
+                    class="com.aidevops.intellij.actions.GenerateDockerAction"
+                    text="Generate Dockerfile"
+                    description="Dockerfile과 docker-compose.yml을 생성합니다"/>
+
+            <action id="AiDevOps.GenerateCicd"
+                    class="com.aidevops.intellij.actions.GenerateCicdAction"
+                    text="Generate CI/CD Pipeline"
+                    description="CI/CD 파이프라인 파일을 생성합니다"/>
+
+            <separator/>
+
+            <action id="AiDevOps.Deploy"
+                    class="com.aidevops.intellij.actions.DeployAction"
+                    text="Deploy to Server"
+                    description="원격 서버에 배포합니다"/>
+
+            <separator/>
+
+            <action id="AiDevOps.AnalyzeLogs"
+                    class="com.aidevops.intellij.actions.AnalyzeLogsAction"
+                    text="Analyze Failure Logs"
+                    description="장애 로그를 AI로 분석합니다"/>
+        </group>
+    </actions>
+</idea-plugin>

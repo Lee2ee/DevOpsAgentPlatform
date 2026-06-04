@@ -58,6 +58,7 @@ class DeployCombo(BaseModel):
     complexity: str      # "simple", "moderate", "complex"
     score: int           # 1-5
     recommended: bool = False
+    traffic_capacity: str = ""  # 예: "일 ~1,000명 / ~10 RPS"
 
 
 class Recommendation(BaseModel):

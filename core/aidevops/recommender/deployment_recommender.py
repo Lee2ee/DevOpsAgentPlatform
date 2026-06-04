@@ -20,6 +20,7 @@ def _combos_small(existing_cicd: str) -> list[DeployCombo]:
             complexity="simple",
             score=5,
             recommended=True,
+            traffic_capacity="일 ~1,000명 / 최대 ~20 RPS",
         ),
         DeployCombo(
             id="oracle_free_gha",
@@ -34,6 +35,7 @@ def _combos_small(existing_cicd: str) -> list[DeployCombo]:
             estimated_cost="무료",
             complexity="simple",
             score=4,
+            traffic_capacity="일 ~500명 / 최대 ~10 RPS",
         ),
         DeployCombo(
             id="railway_gha",
@@ -48,6 +50,7 @@ def _combos_small(existing_cicd: str) -> list[DeployCombo]:
             estimated_cost="월 $0~20 (사용량 기반)",
             complexity="simple",
             score=3,
+            traffic_capacity="일 ~5,000명 / 최대 ~50 RPS (자동 스케일)",
         ),
     ]
     return _apply_existing_cicd(combos, existing_cicd)
@@ -70,6 +73,7 @@ def _combos_medium(infra_services: list[str], existing_cicd: str) -> list[Deploy
             complexity="simple",
             score=5,
             recommended=True,
+            traffic_capacity="일 ~10,000명 / 최대 ~100 RPS",
         ),
         DeployCombo(
             id="aws_ec2_gha",
@@ -84,6 +88,7 @@ def _combos_medium(infra_services: list[str], existing_cicd: str) -> list[Deploy
             estimated_cost="월 $50~150",
             complexity="moderate",
             score=4,
+            traffic_capacity="일 ~50,000명 / 최대 ~500 RPS",
         ),
         DeployCombo(
             id="oracle_oci_gitlab",
@@ -98,6 +103,7 @@ def _combos_medium(infra_services: list[str], existing_cicd: str) -> list[Deploy
             estimated_cost="월 $20~80",
             complexity="moderate",
             score=3,
+            traffic_capacity="일 ~30,000명 / 최대 ~300 RPS",
         ),
     ]
     return _apply_existing_cicd(combos, existing_cicd)
@@ -119,6 +125,7 @@ def _combos_large(existing_cicd: str) -> list[DeployCombo]:
             complexity="moderate",
             score=5,
             recommended=True,
+            traffic_capacity="일 ~500,000명 / 최대 ~5,000 RPS (오토스케일링)",
         ),
         DeployCombo(
             id="aws_eks_gha",
@@ -133,6 +140,7 @@ def _combos_large(existing_cicd: str) -> list[DeployCombo]:
             estimated_cost="월 $200~1000+",
             complexity="complex",
             score=4,
+            traffic_capacity="일 ~1,000,000명 / 최대 ~10,000 RPS (무한 확장)",
         ),
         DeployCombo(
             id="oracle_oke_gitlab",
@@ -147,6 +155,7 @@ def _combos_large(existing_cicd: str) -> list[DeployCombo]:
             estimated_cost="월 $100~500",
             complexity="complex",
             score=3,
+            traffic_capacity="일 ~500,000명 / 최대 ~5,000 RPS (오토스케일링)",
         ),
     ]
     return _apply_existing_cicd(combos, existing_cicd)
@@ -168,6 +177,7 @@ def _combos_enterprise(existing_cicd: str) -> list[DeployCombo]:
             complexity="complex",
             score=5,
             recommended=True,
+            traffic_capacity="일 ~10,000,000명 / 수만 RPS (무제한 확장)",
         ),
         DeployCombo(
             id="gcp_gke_cloudbuild",
@@ -182,6 +192,7 @@ def _combos_enterprise(existing_cicd: str) -> list[DeployCombo]:
             estimated_cost="월 $800+",
             complexity="complex",
             score=4,
+            traffic_capacity="일 ~10,000,000명 / 수만 RPS (글로벌 확장)",
         ),
         DeployCombo(
             id="azure_aks_devops",
@@ -196,6 +207,7 @@ def _combos_enterprise(existing_cicd: str) -> list[DeployCombo]:
             estimated_cost="월 $800+",
             complexity="complex",
             score=3,
+            traffic_capacity="일 ~10,000,000명 / 수만 RPS (엔터프라이즈급)",
         ),
     ]
     return _apply_existing_cicd(combos, existing_cicd)

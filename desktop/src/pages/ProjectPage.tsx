@@ -19,6 +19,7 @@ interface DeployCombo {
   complexity: string;
   score: number;
   recommended: boolean;
+  traffic_capacity: string;
 }
 
 interface Recommendation {
@@ -560,7 +561,14 @@ export function ProjectPage() {
                                     ))}
                                   </div>
                                 </div>
-                                <p className="text-xs text-gray-500 ml-5">{combo.estimated_cost}</p>
+                                <div className="flex items-center gap-3 ml-5">
+                                  <p className="text-xs text-gray-500">{combo.estimated_cost}</p>
+                                  {combo.traffic_capacity && (
+                                    <p className="text-xs text-cyan-400/80 flex items-center gap-1">
+                                      <span>⇅</span>{combo.traffic_capacity}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
                             );
                           })}

@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-import { FolderOpen, Loader, AlertCircle, Trash2, Copy, Save, RefreshCw, FolderTree, ChevronRight, Package, Zap, CheckCircle2 } from "lucide-react";
+import { FolderOpen, Loader, AlertCircle, Trash2, Copy, Save, RefreshCw, FolderTree, Zap, CheckCircle2 } from "lucide-react";
 import { useProjectStore } from "../store/projectStore";
 import { useProjectPageStore } from "../store/projectPageStore";
 import { useActivityStore } from "../store/activityStore";
-import { generateDocker, saveDocker, generateCicd, saveCicd, scanWorkspace, getRecommendation } from "../api";
+import { generateDocker, saveDocker, generateCicd, saveCicd, scanWorkspace, getRecommendation, scanProject as apiScanProject } from "../api";
 
 interface DeployCombo {
   id: string;
@@ -46,46 +46,19 @@ interface WorkspaceResult {
   subprojects: SubProjectInfo[];
 }
 
-interface TreeNode {
-  name: string;
+interface WorkspaceProjectState {
   path: string;
-  isProject: boolean;
-  build_file?: string;
-  children: TreeNode[];
+  name: string;
+  id: string;
+  language: string | null;
+  framework: string | null;
+  recommendation: Recommendation | null;
+  scanError: string | null;
+  isLoading: boolean;
+  quickStartStep: string | null;
+  quickStartDone: boolean;
 }
 
-function buildTree(rootName: string, rootPath: string, subprojects: SubProjectInfo[]): TreeNode {
-  const root: TreeNode = { name: rootName, path: rootPath, isProject: false, children: [] };
-  for (const sp of subprojects) {
-    const parts = sp.rel_path ? sp.rel_path.split("/") : [sp.name];
-    let node = root;
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      const isLast = i === parts.length - 1;
-      let child = node.children.find((c) => c.name === part);
-      if (!child) {
-        child = { name: part, path: sp.path, isProject: isLast, build_file: isLast ? sp.build_file : undefined, children: [] };
-        node.children.push(child);
-      } else if (isLast) {
-        child.isProject = true;
-        child.build_file = sp.build_file;
-      }
-      node = child;
-    }
-  }
-  return root;
-}
-
-const BUILD_FILE_LABELS: Record<string, string> = {
-  "pyproject.toml": "Python",
-  "requirements.txt": "Python",
-  "package.json": "Node.js",
-  "pom.xml": "Java",
-  "build.gradle": "Java",
-  "build.gradle.kts": "Kotlin",
-  "Cargo.toml": "Rust",
-  "go.mod": "Go",
-};
 
 async function pickFolder(): Promise<string | null> {
   try {
@@ -123,7 +96,8 @@ export function ProjectPage() {
   const [manualPath, setManualPath] = useState(currentProject?.path ?? "");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [cicdPlatform, setCicdPlatform] = useState("github_actions");
-  const [workspaceResult, setWorkspaceResult] = useState<WorkspaceResult | null>(null);
+  const [workspaceProjects, setWorkspaceProjects] = useState<WorkspaceProjectState[]>([]);
+  const [isWorkspaceView, setIsWorkspaceView] = useState(false);
   const [isWorkspaceScanning, setIsWorkspaceScanning] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
@@ -148,12 +122,76 @@ export function ProjectPage() {
 
   const handleScan = async (path: string) => {
     if (!path.trim()) return;
-    setWorkspaceResult(null);
+    setIsWorkspaceView(false);
+    setWorkspaceProjects([]);
     setRecommendation(null);
     setQuickStartDone(false);
     await scanProject(path.trim());
     setTab("recommend");
     addActivity({ type: "scan", title: `프로젝트 스캔`, detail: path.trim(), status: "info" });
+  };
+
+  const doAllInOneWorkspace = async (rootName: string, subprojects: SubProjectInfo[]) => {
+    if (subprojects.length === 0) return;
+    setIsWorkspaceView(true);
+    setWorkspaceProjects(
+      subprojects.map((sp) => ({
+        path: sp.path, name: sp.name, id: "", language: null, framework: null,
+        recommendation: null, scanError: null, isLoading: true, quickStartStep: null, quickStartDone: false,
+      }))
+    );
+    await Promise.all(
+      subprojects.map(async (sp) => {
+        try {
+          const proj = await apiScanProject(sp.path) as any;
+          const rec = await getRecommendation(proj.id) as Recommendation;
+          setWorkspaceProjects((prev) =>
+            prev.map((wp) =>
+              wp.path === sp.path
+                ? { ...wp, id: proj.id, language: proj.scan_result?.language ?? null, framework: proj.scan_result?.framework ?? null, recommendation: rec, isLoading: false }
+                : wp
+            )
+          );
+        } catch (e) {
+          setWorkspaceProjects((prev) =>
+            prev.map((wp) =>
+              wp.path === sp.path
+                ? { ...wp, scanError: e instanceof Error ? e.message : String(e), isLoading: false }
+                : wp
+            )
+          );
+        }
+      })
+    );
+    addActivity({ type: "scan", title: `워크스페이스 스캔: ${rootName}`, detail: `${subprojects.length}개 프로젝트 분석 완료`, status: "info" });
+  };
+
+  const handleWorkspaceProjectQuickStart = async (projectPath: string) => {
+    const wp = workspaceProjects.find((p) => p.path === projectPath);
+    if (!wp?.recommendation || !wp.id) return;
+    const combo = wp.recommendation.combos.find((c) => c.recommended) ?? wp.recommendation.combos[0];
+    if (!combo) return;
+
+    const upd = (step: string | null) =>
+      setWorkspaceProjects((prev) => prev.map((p) => p.path === projectPath ? { ...p, quickStartStep: step } : p));
+    const done = () =>
+      setWorkspaceProjects((prev) => prev.map((p) => p.path === projectPath ? { ...p, quickStartDone: true, quickStartStep: null } : p));
+
+    upd("Docker 파일 생성 중...");
+    try {
+      const dockerData = await generateDocker(wp.id) as any;
+      upd("Docker 파일 저장 중...");
+      await saveDocker(dockerData.generation_id, projectPath);
+      upd(`CI/CD (${combo.cicd_name}) 생성 중...`);
+      const cicdData = await generateCicd(wp.id, combo.cicd_id) as any;
+      upd("CI/CD 파일 저장 중...");
+      await saveCicd(cicdData.generation_id, projectPath);
+      done();
+      addActivity({ type: "docker_gen", title: `빠른 시작 완료: ${wp.name}`, detail: `${combo.deploy_name} + ${combo.cicd_name}`, status: "success" });
+    } catch (e) {
+      upd(null);
+      addActivity({ type: "docker_gen", title: `빠른 시작 실패: ${wp.name}`, detail: String(e), status: "failed" });
+    }
   };
 
   // 프로젝트 변경 시 초기화 + 추천 즉시 로드
@@ -216,8 +254,11 @@ export function ProjectPage() {
     setWorkspaceError(null);
     try {
       const data = await scanWorkspace(manualPath.trim()) as WorkspaceResult;
-      setWorkspaceResult(data);
-      addActivity({ type: "scan", title: `워크스페이스 스캔`, detail: manualPath.trim(), status: "info" });
+      if (data.subprojects.length > 0) {
+        await doAllInOneWorkspace(data.root_name, data.subprojects);
+      } else {
+        await handleScan(manualPath.trim());
+      }
     } catch (e: unknown) {
       setWorkspaceError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -229,7 +270,20 @@ export function ProjectPage() {
     const folder = await pickFolder();
     if (folder) {
       setManualPath(folder);
-      await handleScan(folder);
+      setIsWorkspaceScanning(true);
+      setWorkspaceError(null);
+      try {
+        const data = await scanWorkspace(folder) as WorkspaceResult;
+        if (data.subprojects.length > 0) {
+          await doAllInOneWorkspace(data.root_name, data.subprojects);
+        } else {
+          await handleScan(folder);
+        }
+      } catch {
+        await handleScan(folder);
+      } finally {
+        setIsWorkspaceScanning(false);
+      }
     }
   };
 
@@ -414,7 +468,7 @@ export function ProjectPage() {
                     }`}
                   >
                     <button
-                      onClick={() => { setCurrentProject(p); setManualPath(p.path); }}
+                      onClick={() => { setCurrentProject(p); setManualPath(p.path); setIsWorkspaceView(false); }}
                       className="flex-1 text-left flex items-center justify-between px-3 py-2 min-w-0"
                     >
                       <span className="font-medium truncate">{p.name}</span>
@@ -441,11 +495,11 @@ export function ProjectPage() {
 
         {/* ─── Right: 워크스페이스 트리 or 탭 패널 ─── */}
         <div className="flex-1 min-w-0 flex flex-col min-h-0">
-          {workspaceResult ? (
-            <WorkspaceTree
-              result={workspaceResult}
-              onClose={() => setWorkspaceResult(null)}
-              onScan={(path) => { setWorkspaceResult(null); handleScan(path); setManualPath(path); }}
+          {isWorkspaceView ? (
+            <WorkspaceAllInOnePanel
+              projects={workspaceProjects}
+              onClose={() => { setIsWorkspaceView(false); setWorkspaceProjects([]); }}
+              onQuickStart={handleWorkspaceProjectQuickStart}
             />
           ) : currentProject ? (
             <>
@@ -760,87 +814,125 @@ export function ProjectPage() {
   );
 }
 
-// ── WorkspaceTree ──────────────────────────────────────────────
-function WorkspaceTree({
-  result,
+// ── WorkspaceAllInOnePanel ──────────────────────────────────────
+function WorkspaceAllInOnePanel({
+  projects,
   onClose,
-  onScan,
+  onQuickStart,
 }: {
-  result: WorkspaceResult;
+  projects: WorkspaceProjectState[];
   onClose: () => void;
-  onScan: (path: string) => void;
+  onQuickStart: (path: string) => void;
 }) {
-  const tree = buildTree(result.root_name, result.root, result.subprojects);
+  const doneCount = projects.filter((p) => p.quickStartDone).length;
+  const loadingCount = projects.filter((p) => p.isLoading).length;
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between mb-3 flex-shrink-0">
         <span className="text-sm font-semibold text-gray-300 flex items-center gap-2">
           <FolderTree size={15} />
-          워크스페이스 트리
-          <span className="text-xs text-gray-500 font-normal">({result.subprojects.length}개 서브 프로젝트)</span>
+          워크스페이스
+          <span className="text-xs text-gray-500 font-normal">
+            ({projects.length}개 프로젝트
+            {loadingCount > 0 ? ` · 분석 중 ${loadingCount}개` : ""}
+            {doneCount > 0 ? ` · 완료 ${doneCount}개` : ""})
+          </span>
         </span>
         <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">닫기</button>
       </div>
-      <div className="flex-1 overflow-y-auto bg-gray-800 rounded-lg p-3">
-        <TreeNodeView node={tree} depth={0} onScan={onScan} />
+      <div className="flex-1 overflow-y-auto space-y-3">
+        {projects.map((wp) => (
+          <WorkspaceProjectCard key={wp.path} wp={wp} onQuickStart={onQuickStart} />
+        ))}
       </div>
     </div>
   );
 }
 
-function TreeNodeView({ node, depth, onScan }: { node: TreeNode; depth: number; onScan: (path: string) => void }) {
-  const [open, setOpen] = useState(true);
-  const hasChildren = node.children.length > 0;
-  const indent = depth * 16;
+function WorkspaceProjectCard({
+  wp,
+  onQuickStart,
+}: {
+  wp: WorkspaceProjectState;
+  onQuickStart: (path: string) => void;
+}) {
+  const rec = wp.recommendation;
+  const topCombo = rec?.combos.find((c) => c.recommended) ?? rec?.combos[0];
 
   return (
-    <div>
-      <div
-        className="flex items-center gap-1.5 py-1 px-2 rounded hover:bg-gray-700 group"
-        style={{ paddingLeft: `${8 + indent}px` }}
-      >
-        {hasChildren ? (
-          <button onClick={() => setOpen(!open)} className="text-gray-500 hover:text-gray-300 flex-shrink-0">
-            <ChevronRight size={13} className={`transition-transform ${open ? "rotate-90" : ""}`} />
-          </button>
-        ) : (
-          <span className="w-[13px] flex-shrink-0" />
-        )}
-
-        {node.isProject ? (
-          <Package size={13} className="text-brand-400 flex-shrink-0" />
-        ) : (
-          <FolderOpen size={13} className="text-yellow-500 flex-shrink-0" />
-        )}
-
-        <span className={`text-sm ${node.isProject ? "text-gray-100" : "text-gray-400"}`}>
-          {node.name}
-        </span>
-
-        {node.isProject && node.build_file && (
-          <span className="text-xs text-gray-500 ml-1">
-            {BUILD_FILE_LABELS[node.build_file] ?? node.build_file}
-          </span>
-        )}
-
-        {node.isProject && (
-          <button
-            onClick={() => onScan(node.path)}
-            className="ml-auto text-xs text-brand-400 hover:text-brand-300 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-          >
-            스캔
-          </button>
+    <div className="bg-gray-800 rounded-lg p-4">
+      {/* 헤더: 프로젝트명 + 규모 */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-semibold text-gray-100 truncate">{wp.name}</span>
+          {(wp.language || wp.framework) && (
+            <span className="text-xs text-gray-500 flex-shrink-0">
+              {[wp.language, wp.framework].filter(Boolean).join(" · ")}
+            </span>
+          )}
+        </div>
+        {rec && (
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold flex-shrink-0 ml-2 ${
+            rec.scale === "small"      ? "bg-green-900 text-green-300" :
+            rec.scale === "medium"     ? "bg-blue-900 text-blue-300" :
+            rec.scale === "large"      ? "bg-orange-900 text-orange-300" :
+                                         "bg-red-900 text-red-300"
+          }`}>{rec.scale_label}</span>
         )}
       </div>
 
-      {hasChildren && open && (
-        <div>
-          {node.children.map((child) => (
-            <TreeNodeView key={child.path} node={child} depth={depth + 1} onScan={onScan} />
-          ))}
+      {/* 로딩 / 에러 */}
+      {wp.isLoading && (
+        <div className="flex items-center gap-2 text-gray-500 text-xs mt-1">
+          <Loader size={12} className="animate-spin" /> 스캔 및 분석 중...
         </div>
       )}
+      {wp.scanError && (
+        <div className="text-red-400 text-xs flex items-center gap-1 mt-1">
+          <AlertCircle size={12} /> {wp.scanError}
+        </div>
+      )}
+
+      {/* 추천 조합 */}
+      {topCombo && (
+        <div className="mt-2 space-y-1">
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm font-medium text-gray-200">{topCombo.deploy_name}</span>
+            <span className="text-gray-600 text-xs">+</span>
+            <span className="text-sm font-medium text-brand-300">{topCombo.cicd_name}</span>
+          </div>
+          <div className="flex items-center gap-3 text-xs">
+            {topCombo.traffic_capacity && (
+              <span className="text-cyan-400/80">⇅ {topCombo.traffic_capacity}</span>
+            )}
+            <span className="text-gray-500">{topCombo.estimated_cost}</span>
+          </div>
+          <p className="text-xs text-gray-500 line-clamp-1">⚡ {topCombo.synergy}</p>
+        </div>
+      )}
+
+      {/* 빠른 시작 */}
+      <div className="mt-3">
+        {wp.quickStartDone ? (
+          <div className="flex items-center gap-1.5 text-green-400 text-xs">
+            <CheckCircle2 size={13} /> Docker + CI/CD 파일 저장 완료
+          </div>
+        ) : wp.quickStartStep ? (
+          <div className="flex items-center gap-1.5 text-gray-400 text-xs">
+            <Loader size={12} className="animate-spin flex-shrink-0" /> {wp.quickStartStep}
+          </div>
+        ) : (
+          <button
+            onClick={() => onQuickStart(wp.path)}
+            disabled={!topCombo || wp.isLoading || !wp.id}
+            className="flex items-center gap-1.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 rounded text-xs transition-colors"
+          >
+            <Zap size={12} />
+            빠른 시작
+          </button>
+        )}
+      </div>
     </div>
   );
 }

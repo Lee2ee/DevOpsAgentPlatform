@@ -97,9 +97,9 @@ export function ProjectPage() {
   const [manualPath, setManualPath] = useState(currentProject?.path ?? "");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [cicdPlatform, setCicdPlatform] = useState("github_actions");
+  const [workspace, setWorkspace] = useState<WorkspaceResult | null>(null);
   const [workspaceProjects, setWorkspaceProjects] = useState<WorkspaceProjectState[]>([]);
   const [isWorkspaceView, setIsWorkspaceView] = useState(false);
-  const [workspaceRootName, setWorkspaceRootName] = useState("");
   const [isWorkspaceScanning, setIsWorkspaceScanning] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
@@ -124,9 +124,9 @@ export function ProjectPage() {
 
   const handleScan = async (path: string) => {
     if (!path.trim()) return;
+    setWorkspace(null);
     setIsWorkspaceView(false);
     setWorkspaceProjects([]);
-    setWorkspaceRootName("");
     setRecommendation(null);
     setQuickStartDone(false);
     await scanProject(path.trim());
@@ -137,7 +137,6 @@ export function ProjectPage() {
   const doAllInOneWorkspace = async (rootName: string, subprojects: SubProjectInfo[]) => {
     if (subprojects.length === 0) return;
     setIsWorkspaceView(true);
-    setWorkspaceRootName(rootName);
     setWorkspaceProjects(
       subprojects.map((sp) => ({
         path: sp.path, name: sp.name, id: "", language: null, framework: null,
@@ -171,6 +170,19 @@ export function ProjectPage() {
     // store 프로젝트 목록 갱신 (apiScanProject는 store를 업데이트하지 않으므로)
     await loadProjects();
     addActivity({ type: "scan", title: `워크스페이스 스캔: ${rootName}`, detail: `${subprojects.length}개 프로젝트 분석 완료`, status: "info" });
+  };
+
+  const handleWorkspaceRootClick = async () => {
+    if (!workspace) return;
+    await doAllInOneWorkspace(workspace.root_name, workspace.subprojects);
+  };
+
+  const handleScanSubproject = async (path: string) => {
+    setIsWorkspaceView(false);
+    setManualPath(path);
+    await scanProject(path);
+    setTab("recommend");
+    addActivity({ type: "scan", title: `프로젝트 스캔`, detail: path, status: "info" });
   };
 
   const handleWorkspaceProjectQuickStart = async (projectPath: string) => {
@@ -262,7 +274,9 @@ export function ProjectPage() {
     try {
       const data = await scanWorkspace(manualPath.trim()) as WorkspaceResult;
       if (data.subprojects.length > 0) {
-        await doAllInOneWorkspace(data.root_name, data.subprojects);
+        setWorkspace(data);
+        setIsWorkspaceView(false);
+        setWorkspaceProjects([]);
       } else {
         await handleScan(manualPath.trim());
       }
@@ -282,7 +296,9 @@ export function ProjectPage() {
       try {
         const data = await scanWorkspace(folder) as WorkspaceResult;
         if (data.subprojects.length > 0) {
-          await doAllInOneWorkspace(data.root_name, data.subprojects);
+          setWorkspace(data);
+          setIsWorkspaceView(false);
+          setWorkspaceProjects([]);
         } else {
           await handleScan(folder);
         }
@@ -464,16 +480,19 @@ export function ProjectPage() {
           </div>
 
           {/* ─── 프로젝트 트리 목록 ─── */}
-          {projects.length > 0 && (
+          {(workspace ? workspace.subprojects.length > 0 : projects.length > 0) && (
             <ProjectTree
               projects={projects}
               currentProject={currentProject}
-              workspaceProjects={isWorkspaceView ? workspaceProjects : []}
-              workspaceRootName={isWorkspaceView ? workspaceRootName : ""}
+              workspace={workspace}
+              workspaceProjects={workspaceProjects}
+              isWorkspaceView={isWorkspaceView}
               deletingId={deletingId}
-              onSelect={(p) => { setCurrentProject(p); setManualPath(p.path); setIsWorkspaceView(false); }}
+              onSelect={(p) => { setCurrentProject(p); setManualPath(p.path); }}
               onDelete={handleDelete}
-              onWorkspaceClose={isWorkspaceView ? () => { setIsWorkspaceView(false); setWorkspaceProjects([]); setWorkspaceRootName(""); } : undefined}
+              onWorkspaceRootClick={workspace ? handleWorkspaceRootClick : undefined}
+              onSubprojectClick={workspace ? handleScanSubproject : undefined}
+              onWorkspaceClose={workspace ? () => { setWorkspace(null); setIsWorkspaceView(false); setWorkspaceProjects([]); } : undefined}
             />
           )}
         </div>
@@ -800,71 +819,96 @@ export function ProjectPage() {
 }
 
 // ── ProjectTree ────────────────────────────────────────────────
-function getParentPath(p: string) {
-  return p.replace(/\\/g, "/").split("/").slice(0, -1).join("/");
+/** 여러 경로의 공통 조상 경로를 반환. 의미 없는 경우(드라이브만 등) null 반환. */
+function getCommonRoot(paths: string[]): string | null {
+  if (paths.length < 2) return null;
+  const norm = paths.map((p) => p.replace(/\\/g, "/"));
+  const parts = norm.map((p) => p.split("/"));
+  const minLen = Math.min(...parts.map((p) => p.length));
+  const common: string[] = [];
+  for (let i = 0; i < minLen; i++) {
+    if (parts.every((p) => p[i].toLowerCase() === parts[0][i].toLowerCase())) {
+      common.push(parts[0][i]);
+    } else break;
+  }
+  const joined = common.join("/");
+  // 드라이브 문자만이거나 빈 경우는 의미 없음
+  if (!joined || /^[A-Za-z]:$/.test(joined) || joined === "/") return null;
+  return joined;
 }
 
 function ProjectTree({
   projects,
   currentProject,
+  workspace,
   workspaceProjects,
-  workspaceRootName,
+  isWorkspaceView,
   deletingId,
   onSelect,
   onDelete,
+  onWorkspaceRootClick,
+  onSubprojectClick,
   onWorkspaceClose,
 }: {
   projects: Project[];
   currentProject: Project | null;
+  workspace: WorkspaceResult | null;
   workspaceProjects: WorkspaceProjectState[];
-  workspaceRootName: string;
+  isWorkspaceView: boolean;
   deletingId: string | null;
   onSelect: (p: Project) => void;
   onDelete: (id: string) => void;
+  onWorkspaceRootClick?: () => void;
+  onSubprojectClick?: (path: string) => void;
   onWorkspaceClose?: () => void;
 }) {
-  // ── 워크스페이스 모드: workspaceProjects를 직접 사용 (store 동기화 전에도 즉시 표시) ──
-  if (workspaceRootName && workspaceProjects.length > 0) {
+  // ── 워크스페이스 모드: 폴더 선택 후 트리 표시 ──
+  if (workspace) {
+    const displayRoot = workspace.root_name || "워크스페이스";
     return (
       <div className="flex-1 overflow-y-auto min-h-0">
-        {/* 워크스페이스 루트 헤더 */}
-        <div className="flex items-center gap-1.5 px-2 py-1.5 mt-1 mb-0.5">
+        {/* 워크스페이스 루트 — 클릭 시 전체 올인원 스캔 */}
+        <div
+          onClick={onWorkspaceRootClick}
+          className={`flex items-center gap-1.5 px-2 py-1.5 mt-1 mb-0.5 rounded cursor-pointer transition-colors ${
+            isWorkspaceView ? "bg-brand-700" : "hover:bg-gray-700"
+          }`}
+        >
           <FolderTree size={11} className="text-brand-400 flex-shrink-0" />
-          <span className="text-xs font-semibold text-gray-300 truncate flex-1">{workspaceRootName}</span>
+          <span className="text-xs font-semibold text-gray-300 truncate flex-1">{displayRoot}</span>
           {onWorkspaceClose && (
             <button
-              onClick={onWorkspaceClose}
+              onClick={(e) => { e.stopPropagation(); onWorkspaceClose!(); }}
               className="text-xs text-gray-600 hover:text-gray-400 flex-shrink-0 px-1"
               title="워크스페이스 닫기"
             >✕</button>
           )}
         </div>
-        {/* 서브 프로젝트 목록 */}
-        {workspaceProjects.map((wp, idx) => {
-          const isLast = idx === workspaceProjects.length - 1;
-          const storeP = projects.find((p) => p.path === wp.path);
+        {/* 서브 프로젝트 목록 — 클릭 시 개별 스캔 */}
+        {workspace.subprojects.map((sp, idx) => {
+          const isLast = idx === workspace.subprojects.length - 1;
+          const wp = workspaceProjects.find((p) => p.path === sp.path);
+          const storeP = projects.find((p) => p.path === sp.path);
+          const isActive = !isWorkspaceView && currentProject?.id === storeP?.id;
           return (
             <div
-              key={wp.path}
+              key={sp.path}
               className={`flex items-center rounded text-sm transition-colors ${
-                storeP && currentProject?.id === storeP.id ? "bg-brand-700" : "bg-gray-800 hover:bg-gray-700"
+                isActive ? "bg-brand-700" : "hover:bg-gray-700"
               }`}
             >
               <span className="pl-3 text-gray-700 font-mono text-xs flex-shrink-0 select-none">
                 {isLast ? "└" : "├"}
               </span>
               <button
-                onClick={() => {
-                  if (storeP) onSelect(storeP);
-                  document.getElementById(`ws-card-${wp.path}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-                }}
+                onClick={() => onSubprojectClick?.(sp.path)}
                 className="flex-1 text-left flex items-center gap-2 px-2 py-2 min-w-0"
               >
-                <span className="font-medium truncate flex-1">{wp.name}</span>
-                <span className="text-gray-500 text-xs flex-shrink-0">{wp.language ?? "…"}</span>
-                {wp.isLoading    && <Loader       size={11} className="animate-spin text-gray-500 flex-shrink-0" />}
-                {wp.quickStartDone && <CheckCircle2 size={11} className="text-green-400 flex-shrink-0" />}
-                {wp.scanError    && <AlertCircle  size={11} className="text-red-400 flex-shrink-0" />}
+                <span className="font-medium truncate flex-1">{sp.name}</span>
+                {wp?.language && <span className="text-gray-500 text-xs flex-shrink-0">{wp.language}</span>}
+                {wp?.isLoading    && <Loader       size={11} className="animate-spin text-gray-500 flex-shrink-0" />}
+                {wp?.quickStartDone && <CheckCircle2 size={11} className="text-green-400 flex-shrink-0" />}
+                {wp?.scanError    && <AlertCircle  size={11} className="text-red-400 flex-shrink-0" />}
               </button>
             </div>
           );
@@ -873,60 +917,49 @@ function ProjectTree({
     );
   }
 
-  // ── 일반 모드: store의 projects를 부모 경로 기준으로 그룹화 ──
-  const groups = new Map<string, Project[]>();
-  for (const p of projects) {
-    const parent = getParentPath(p.path);
-    if (!groups.has(parent)) groups.set(parent, []);
-    groups.get(parent)!.push(p);
-  }
+  // ── 일반 모드: 모든 projects의 공통 조상 경로로 그룹화 ──
+  const normalizedPaths = projects.map((p) => p.path.replace(/\\/g, "/"));
+  const commonRoot = getCommonRoot(normalizedPaths);
+  const rootName = commonRoot ? commonRoot.split("/").pop() ?? commonRoot : null;
+  const grouped = rootName !== null && projects.length > 1;
 
   return (
-    <div className="flex-1 overflow-y-auto min-h-0 space-y-1">
-      {Array.from(groups.entries()).map(([parentPath, groupProjects]) => {
-        const parentName = parentPath.split("/").pop() ?? parentPath;
-        const grouped = groupProjects.length > 1;
-
+    <div className="flex-1 overflow-y-auto min-h-0">
+      {grouped && (
+        <div className="flex items-center gap-1.5 px-2 py-1.5 mt-1 mb-0.5">
+          <FolderTree size={11} className="text-brand-400 flex-shrink-0" />
+          <span className="text-xs font-semibold text-gray-300 truncate flex-1">{rootName}</span>
+        </div>
+      )}
+      {projects.map((p, idx) => {
+        const isLast = idx === projects.length - 1;
         return (
-          <div key={parentPath}>
+          <div
+            key={p.id}
+            className={`flex items-center rounded text-sm transition-colors ${
+              currentProject?.id === p.id ? "bg-brand-700" : "bg-gray-800 hover:bg-gray-700"
+            }`}
+          >
             {grouped && (
-              <div className="flex items-center gap-1.5 px-2 py-1 mt-1">
-                <FolderTree size={11} className="text-brand-400 flex-shrink-0" />
-                <span className="text-xs font-semibold text-gray-400 truncate flex-1">{parentName}</span>
-              </div>
+              <span className="pl-3 text-gray-700 font-mono text-xs flex-shrink-0 select-none">
+                {isLast ? "└" : "├"}
+              </span>
             )}
-            {groupProjects.map((p, idx) => {
-              const isLast = idx === groupProjects.length - 1;
-              return (
-                <div
-                  key={p.id}
-                  className={`flex items-center rounded text-sm transition-colors ${
-                    currentProject?.id === p.id ? "bg-brand-700" : "bg-gray-800 hover:bg-gray-700"
-                  }`}
-                >
-                  {grouped && (
-                    <span className="pl-3 text-gray-700 font-mono text-xs flex-shrink-0 select-none">
-                      {isLast ? "└" : "├"}
-                    </span>
-                  )}
-                  <button
-                    onClick={() => onSelect(p)}
-                    className="flex-1 text-left flex items-center gap-2 px-2 py-2 min-w-0"
-                  >
-                    <span className="font-medium truncate flex-1">{p.name}</span>
-                    <span className="text-gray-500 text-xs flex-shrink-0">{p.scan_result?.language ?? "?"}</span>
-                  </button>
-                  <button
-                    onClick={() => onDelete(p.id)}
-                    disabled={deletingId === p.id}
-                    title="삭제"
-                    className="px-2 py-2 text-gray-600 hover:text-red-400 disabled:opacity-50 transition-colors flex-shrink-0"
-                  >
-                    {deletingId === p.id ? <Loader size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                  </button>
-                </div>
-              );
-            })}
+            <button
+              onClick={() => onSelect(p)}
+              className="flex-1 text-left flex items-center gap-2 px-2 py-2 min-w-0"
+            >
+              <span className="font-medium truncate flex-1">{p.name}</span>
+              <span className="text-gray-500 text-xs flex-shrink-0">{p.scan_result?.language ?? "?"}</span>
+            </button>
+            <button
+              onClick={() => onDelete(p.id)}
+              disabled={deletingId === p.id}
+              title="삭제"
+              className="px-2 py-2 text-gray-600 hover:text-red-400 disabled:opacity-50 transition-colors flex-shrink-0"
+            >
+              {deletingId === p.id ? <Loader size={13} className="animate-spin" /> : <Trash2 size={13} />}
+            </button>
           </div>
         );
       })}

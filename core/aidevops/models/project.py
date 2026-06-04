@@ -24,6 +24,7 @@ class ScanResult(BaseModel):
     dependencies: list[Dependency] = Field(default_factory=list)
     config_files: list[str] = Field(default_factory=list)
     scan_confidence: float = 0.0
+    description: str = ""
     scanned_at: str
 
 

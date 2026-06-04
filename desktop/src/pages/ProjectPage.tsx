@@ -691,6 +691,12 @@ export function ProjectPage() {
                 {/* ── 스캔 결과 탭 ── */}
                 {tab === "scan" && sr && (
                   <div className="bg-gray-800 rounded-lg p-4 space-y-4">
+                    {(() => {
+                      const desc = sr.description || buildDescription(currentProject.name, sr);
+                      return desc ? (
+                        <p className="text-sm text-gray-300 border-l-2 border-brand-500 pl-3">{desc}</p>
+                      ) : null;
+                    })()}
                     <div className="grid grid-cols-2 gap-3 text-sm">
                       <div className="col-span-2">
                         <p className="text-xs text-gray-500">경로</p>
@@ -1136,6 +1142,11 @@ function WorkspaceProjectCard({
         </div>
       )}
 
+      {/* 프로젝트 설명 */}
+      {sr?.description && !wp.isLoading && (
+        <p className="text-xs text-gray-400 border-l-2 border-brand-600 pl-2 mt-1.5">{sr.description}</p>
+      )}
+
       {/* 스캔 상세 */}
       {sr && !wp.isLoading && (
         <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs mt-1.5 mb-2">
@@ -1185,6 +1196,34 @@ function WorkspaceProjectCard({
       </div>
     </div>
   );
+}
+
+/** 스캔 결과로부터 프로젝트 설명을 즉시 생성 (백엔드 description 없을 때 폴백) */
+function buildDescription(name: string, sr: { language: string | null; framework: string | null; database: string[]; cache: string[]; message_queue: string[] }): string {
+  const fw = (sr.framework ?? "").toLowerCase();
+  const lang = sr.language ?? "";
+  const n = name.toLowerCase();
+  const parts: string[] = [];
+
+  if (fw.includes("fastapi") || fw.includes("flask") || fw.includes("django"))
+    parts.push(`${sr.framework} 백엔드 API 서비스`);
+  else if (fw.includes("react") || fw.includes("vue") || fw.includes("angular") || fw.includes("svelte"))
+    parts.push(`${sr.framework} 프론트엔드 앱`);
+  else if (fw.includes("tauri") || fw.includes("electron"))
+    parts.push(`${sr.framework} 데스크탑 앱`);
+  else if (fw.includes("spring"))
+    parts.push(`${sr.framework} 백엔드 서비스`);
+  else if (n.includes("plugin") || n.includes("intellij") || n.includes("vscode"))
+    parts.push(`${lang} IDE 플러그인`);
+  else if (n.includes("cli") || n.includes("tool") || n.includes("cmd"))
+    parts.push(`${lang} CLI 도구`);
+  else if (lang)
+    parts.push(`${lang} 프로젝트`);
+
+  const infra = [...sr.database, ...sr.cache, ...sr.message_queue];
+  if (infra.length > 0) parts.push(`${infra.slice(0, 3).join(", ")} 사용`);
+
+  return parts.join(" · ");
 }
 
 function InfoRow({ label, value }: { label: string; value: string | null | undefined }) {

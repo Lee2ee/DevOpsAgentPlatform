@@ -74,6 +74,9 @@ async def scan(
     # 8. 신뢰도 계산
     confidence = _calc_confidence(lang_info, deps, runtime, ai_notes)
 
+    # 9. 프로젝트 설명 (AI 생성 or 규칙 기반 폴백)
+    description = ai_notes.get("description") or _rule_description(lang_info, runtime, root)
+
     result = ScanResult(
         project_id=str(uuid.uuid4()),
         path=str(root),
@@ -92,6 +95,7 @@ async def scan(
         dependencies=deps[:100],      # 최대 100개만 저장
         config_files=detected_file_names,
         scan_confidence=confidence,
+        description=description,
         scanned_at=datetime.now(timezone.utc).isoformat(),
     )
     logger.info("스캔 완료: %s (신뢰도: %.2f)", root.name, confidence)
@@ -123,7 +127,7 @@ async def _ai_enhance(ai_provider, root: Path, lang_info, runtime, deps) -> dict
 
 정적 분석으로 탐지되지 않은 추가 서비스나 요구사항이 있으면 알려주세요.
 반드시 JSON 형식으로만 응답하세요:
-{{"additional_database": [], "additional_services": [], "notes": "", "confidence_boost": 0.0}}
+{{"additional_database": [], "additional_services": [], "notes": "", "confidence_boost": 0.0, "description": "이 프로젝트가 무엇을 하는지 한 문장으로 (한국어)"}}
 """
     response = await ai_provider.complete(prompt)
     # JSON 파싱 시도
@@ -132,6 +136,38 @@ async def _ai_enhance(ai_provider, root: Path, lang_info, runtime, deps) -> dict
     if start >= 0 and end > start:
         return json.loads(response[start:end])
     return {}
+
+
+def _rule_description(lang_info, runtime, root: Path) -> str:
+    """AI 없이 스캔 결과만으로 간단한 프로젝트 설명 생성."""
+    parts: list[str] = []
+
+    fw = lang_info.framework or ""
+    lang = lang_info.language or ""
+    name = root.name.lower()
+
+    # 역할 추론
+    if any(k in fw.lower() for k in ("fastapi", "flask", "django")):
+        parts.append(f"{fw} 백엔드 API 서비스")
+    elif any(k in fw.lower() for k in ("react", "vue", "angular", "svelte")):
+        parts.append(f"{fw} 프론트엔드 앱")
+    elif any(k in fw.lower() for k in ("tauri", "electron")):
+        parts.append(f"{fw} 데스크탑 앱")
+    elif "spring" in fw.lower():
+        parts.append(f"{fw} 백엔드 서비스")
+    elif any(k in name for k in ("plugin", "intellij", "vscode", "extension")):
+        parts.append(f"{lang} IDE 플러그인")
+    elif any(k in name for k in ("cli", "tool", "cmd")):
+        parts.append(f"{lang} CLI 도구")
+    elif lang:
+        parts.append(f"{lang} 프로젝트")
+
+    # 인프라 보조 설명
+    infra = runtime.database + runtime.cache + runtime.message_queue
+    if infra:
+        parts.append(f"{', '.join(infra[:3])} 사용")
+
+    return " · ".join(parts)
 
 
 def _calc_confidence(lang_info, deps, runtime, ai_notes) -> float:

@@ -12,6 +12,7 @@ export interface ScanResult {
   existing_docker: boolean;
   existing_cicd: string;
   scan_confidence: number;
+  description: string;
   scanned_at: string;
 }
 
@@ -40,6 +41,7 @@ function mapScanResponse(data: Record<string, unknown>, path?: string): Project 
       existing_docker: (data.existing_docker as boolean) ?? false,
       existing_cicd: (data.existing_cicd as string) ?? "none",
       scan_confidence: (data.scan_confidence as number) ?? 0,
+      description: (data.description as string) ?? "",
       scanned_at: (data.scanned_at as string) ?? "",
     },
     created_at: (data.scanned_at as string) || new Date().toISOString(),
@@ -64,6 +66,7 @@ function mapSummaryResponse(data: Record<string, unknown>): Project {
           existing_docker: false,
           existing_cicd: "none",
           scan_confidence: 0,
+          description: "",
           scanned_at: (data.scanned_at as string) ?? "",
         }
       : null,

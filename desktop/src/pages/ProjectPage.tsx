@@ -144,11 +144,12 @@ export function ProjectPage() {
       subprojects.map(async (sp) => {
         try {
           const proj = await apiScanProject(sp.path) as any;
-          const rec = await getRecommendation(proj.id) as Recommendation;
+          const projectId = proj.project_id ?? proj.id;
+          const rec = await getRecommendation(projectId) as Recommendation;
           setWorkspaceProjects((prev) =>
             prev.map((wp) =>
               wp.path === sp.path
-                ? { ...wp, id: proj.id, language: proj.scan_result?.language ?? null, framework: proj.scan_result?.framework ?? null, recommendation: rec, isLoading: false }
+                ? { ...wp, id: projectId, language: proj.language ?? null, framework: proj.framework ?? null, recommendation: rec, isLoading: false }
                 : wp
             )
           );

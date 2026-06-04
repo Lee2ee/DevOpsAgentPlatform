@@ -98,6 +98,7 @@ export function ProjectPage() {
   const [cicdPlatform, setCicdPlatform] = useState("github_actions");
   const [workspaceProjects, setWorkspaceProjects] = useState<WorkspaceProjectState[]>([]);
   const [isWorkspaceView, setIsWorkspaceView] = useState(false);
+  const [workspaceRootName, setWorkspaceRootName] = useState("");
   const [isWorkspaceScanning, setIsWorkspaceScanning] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
@@ -124,6 +125,7 @@ export function ProjectPage() {
     if (!path.trim()) return;
     setIsWorkspaceView(false);
     setWorkspaceProjects([]);
+    setWorkspaceRootName("");
     setRecommendation(null);
     setQuickStartDone(false);
     await scanProject(path.trim());
@@ -134,6 +136,7 @@ export function ProjectPage() {
   const doAllInOneWorkspace = async (rootName: string, subprojects: SubProjectInfo[]) => {
     if (subprojects.length === 0) return;
     setIsWorkspaceView(true);
+    setWorkspaceRootName(rootName);
     setWorkspaceProjects(
       subprojects.map((sp) => ({
         path: sp.path, name: sp.name, id: "", language: null, framework: null,
@@ -457,7 +460,49 @@ export function ProjectPage() {
             )}
           </div>
 
-          {projects.length > 0 && (
+          {/* ─── 워크스페이스 트리 or 단일 프로젝트 목록 ─── */}
+          {isWorkspaceView && workspaceProjects.length > 0 ? (
+            <div className="flex-1 overflow-y-auto min-h-0">
+              {/* 루트 */}
+              <div className="flex items-center gap-1.5 px-2 py-1.5 mb-1">
+                <FolderTree size={13} className="text-brand-400 flex-shrink-0" />
+                <span className="text-xs font-semibold text-gray-300 truncate">{workspaceRootName}</span>
+                <span className="text-xs text-gray-600 flex-shrink-0 ml-auto">
+                  {workspaceProjects.length}개
+                </span>
+              </div>
+              {/* 서브 프로젝트 */}
+              <div className="space-y-0.5">
+                {workspaceProjects.map((wp, idx) => {
+                  const isLast = idx === workspaceProjects.length - 1;
+                  return (
+                    <button
+                      key={wp.path}
+                      onClick={() => {
+                        const el = document.getElementById(`ws-card-${wp.path}`);
+                        el?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                      className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-gray-700 text-left transition-colors group"
+                    >
+                      {/* 트리 선 */}
+                      <span className="text-gray-700 flex-shrink-0 font-mono text-xs">
+                        {isLast ? "└" : "├"}
+                      </span>
+                      <span className="text-sm text-gray-200 truncate flex-1">{wp.name}</span>
+                      {/* 언어 */}
+                      {wp.language && (
+                        <span className="text-xs text-gray-600 flex-shrink-0">{wp.language}</span>
+                      )}
+                      {/* 상태 아이콘 */}
+                      {wp.isLoading && <Loader size={11} className="animate-spin text-gray-500 flex-shrink-0" />}
+                      {wp.quickStartDone && <CheckCircle2 size={11} className="text-green-400 flex-shrink-0" />}
+                      {wp.scanError && <AlertCircle size={11} className="text-red-400 flex-shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : projects.length > 0 ? (
             <div className="flex-1 overflow-y-auto min-h-0">
               <h2 className="text-xs font-semibold text-gray-400 mb-2">프로젝트 목록</h2>
               <div className="space-y-1">
@@ -491,7 +536,7 @@ export function ProjectPage() {
                 ))}
               </div>
             </div>
-          )}
+          ) : null}
         </div>
 
         {/* ─── Right: 워크스페이스 트리 or 탭 패널 ─── */}
@@ -499,7 +544,7 @@ export function ProjectPage() {
           {isWorkspaceView ? (
             <WorkspaceAllInOnePanel
               projects={workspaceProjects}
-              onClose={() => { setIsWorkspaceView(false); setWorkspaceProjects([]); }}
+              onClose={() => { setIsWorkspaceView(false); setWorkspaceProjects([]); setWorkspaceRootName(""); }}
               onQuickStart={handleWorkspaceProjectQuickStart}
             />
           ) : currentProject ? (
@@ -862,7 +907,7 @@ function WorkspaceProjectCard({
   const topCombo = rec?.combos.find((c) => c.recommended) ?? rec?.combos[0];
 
   return (
-    <div className="bg-gray-800 rounded-lg p-4">
+    <div id={`ws-card-${wp.path}`} className="bg-gray-800 rounded-lg p-4">
       {/* 헤더: 프로젝트명 + 규모 */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 min-w-0">

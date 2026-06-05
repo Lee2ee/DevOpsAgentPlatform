@@ -1,0 +1,187 @@
+trigger:
+  branches:
+    include:
+      - {{ branch }}
+
+variables:
+  ACR_LOGIN_SERVER: $(ACR_LOGIN_SERVER)
+  IMAGE_NAME: $(ACR_LOGIN_SERVER)/{{ app_name }}
+  IMAGE_TAG: $(Build.SourceVersion)
+  AKS_RESOURCE_GROUP: $(AKS_RESOURCE_GROUP)
+  AKS_CLUSTER_NAME: $(AKS_CLUSTER_NAME)
+  K8S_NAMESPACE: $(K8S_NAMESPACE)
+
+{% if language == 'java' or language == 'kotlin' %}
+stages:
+- stage: Test
+  jobs:
+  - job: test
+    pool:
+      vmImage: ubuntu-latest
+    container: eclipse-temurin:{{ language_version }}-jdk
+    steps:
+{% if build_tool == 'gradle' %}
+    - script: chmod +x gradlew 2>/dev/null || true && {{ test_command }}
+{% else %}
+    - script: chmod +x mvnw 2>/dev/null || true && {{ test_command }}
+{% endif %}
+      displayName: Run tests
+    - task: PublishTestResults@2
+      inputs:
+        testResultsFormat: JUnit
+{% if build_tool == 'gradle' %}
+        testResultsFiles: build/test-results/test/*.xml
+{% else %}
+        testResultsFiles: target/surefire-reports/*.xml
+{% endif %}
+      condition: always()
+
+- stage: Build
+  dependsOn: Test
+  jobs:
+  - job: build
+    pool:
+      vmImage: ubuntu-latest
+    container: eclipse-temurin:{{ language_version }}-jdk
+    steps:
+{% if build_tool == 'gradle' %}
+    - script: chmod +x gradlew 2>/dev/null || true && {{ build_command }}
+{% else %}
+    - script: chmod +x mvnw 2>/dev/null || true && {{ build_command }}
+{% endif %}
+      displayName: Build artifact
+    - task: PublishPipelineArtifact@1
+      inputs:
+{% if build_tool == 'gradle' %}
+        targetPath: build/libs
+{% else %}
+        targetPath: target
+{% endif %}
+        artifact: jar
+
+{% elif language in ('javascript', 'typescript') %}
+stages:
+- stage: Test
+  jobs:
+  - job: test
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: {{ language_version }}
+    - script: {{ pkg_install_command }}
+      displayName: Install dependencies
+    - script: {{ test_command }}
+      displayName: Run tests
+
+- stage: Build
+  dependsOn: Test
+  jobs:
+  - job: build
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: {{ language_version }}
+    - script: {{ pkg_install_command }}
+      displayName: Install dependencies
+    - script: {{ build_command }}
+      displayName: Build
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: dist
+        artifact: dist
+
+{% elif language == 'python' %}
+stages:
+- stage: Test
+  jobs:
+  - job: test
+    pool:
+      vmImage: ubuntu-latest
+    container: python:{{ language_version }}-slim
+    steps:
+    - script: {{ pkg_install_command }} && {{ test_command }}
+      displayName: Install and test
+
+- stage: Build
+  dependsOn: Test
+  jobs:
+  - job: build
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - script: echo "Python build stage"
+      displayName: Build
+
+{% else %}
+stages:
+- stage: Build
+  jobs:
+  - job: build
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - script: echo "Build stage"
+      displayName: Build
+
+{% endif %}
+- stage: DockerBuild
+  dependsOn: Build
+  jobs:
+  - job: docker_build_push
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: AzureCLI@2
+      displayName: Build and push Docker image to ACR
+      inputs:
+        azureSubscription: $(AZURE_SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az acr login --name $(echo $ACR_LOGIN_SERVER | cut -d. -f1)
+          docker build -t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:latest .
+          docker push $IMAGE_NAME:$IMAGE_TAG
+          docker push $IMAGE_NAME:latest
+
+- stage: Deploy
+  dependsOn: DockerBuild
+  jobs:
+  - deployment: deploy_to_aks
+    pool:
+      vmImage: ubuntu-latest
+    environment: production
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureCLI@2
+            displayName: Get AKS credentials
+            inputs:
+              azureSubscription: $(AZURE_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az aks get-credentials --resource-group $AKS_RESOURCE_GROUP --name $AKS_CLUSTER_NAME --overwrite-existing
+          - task: KubernetesManifest@1
+            displayName: Deploy to AKS
+            inputs:
+              action: deploy
+              connectionType: azureResourceManager
+              azureSubscriptionConnection: $(AZURE_SERVICE_CONNECTION)
+              azureResourceGroup: $(AKS_RESOURCE_GROUP)
+              kubernetesCluster: $(AKS_CLUSTER_NAME)
+              namespace: $(K8S_NAMESPACE)
+              manifests: k8s/*.yaml
+              containers: $(IMAGE_NAME):$(IMAGE_TAG)
+          - task: AzureCLI@2
+            displayName: Verify deployment
+            inputs:
+              azureSubscription: $(AZURE_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                kubectl rollout status deployment/{{ app_name }} -n $K8S_NAMESPACE --timeout=120s

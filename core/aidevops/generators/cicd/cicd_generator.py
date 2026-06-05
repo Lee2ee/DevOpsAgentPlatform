@@ -17,13 +17,22 @@ _JINJA = Environment(
     keep_trailing_newline=True,
 )
 
-# 플랫폼 → (템플릿파일, 저장경로)
+# (cicd_id, deploy_platform) → (템플릿파일, 저장경로)
+# 복합키: "{cicd_id}_{deploy_platform}", 없으면 "{cicd_id}" fallback
 _PLATFORM_MAP: dict[str, tuple[str, str]] = {
-    "github_actions": ("github_actions.j2", ".github/workflows/deploy.yml"),
-    "gitlab_ci":      ("gitlab_ci.j2",      ".gitlab-ci.yml"),
-    "jenkins":        ("jenkinsfile.j2",     "Jenkinsfile"),
-    "azure_devops":   ("azure_devops.j2",    "azure-pipelines.yml"),
-    "bitbucket":      ("bitbucket_pipelines.j2", "bitbucket-pipelines.yml"),
+    "github_actions":          ("github_actions.j2",          ".github/workflows/deploy.yml"),
+    "github_actions_aws":      ("github_actions_aws.j2",      ".github/workflows/deploy.yml"),
+    "github_actions_gcp":      ("github_actions_gcp.j2",      ".github/workflows/deploy.yml"),
+    "github_actions_oracle":   ("github_actions_oracle.j2",   ".github/workflows/deploy.yml"),
+    "github_actions_railway":  ("railway.j2",                 "railway.toml"),
+    "github_actions_vercel":   ("vercel.j2",                  "vercel.json"),
+    "gitlab_ci":               ("gitlab_ci.j2",               ".gitlab-ci.yml"),
+    "gitlab_ci_aws":           ("gitlab_ci_aws.j2",           ".gitlab-ci.yml"),
+    "gitlab_ci_oracle":        ("gitlab_ci_oracle.j2",        ".gitlab-ci.yml"),
+    "jenkins":                 ("jenkinsfile.j2",              "Jenkinsfile"),
+    "azure_devops":            ("azure_devops.j2",             "azure-pipelines.yml"),
+    "azure_devops_azure":      ("azure_devops_azure.j2",       "azure-pipelines.yml"),
+    "bitbucket":               ("bitbucket_pipelines.j2",     "bitbucket-pipelines.yml"),
 }
 
 _FRAMEWORK_PORTS: dict[str, int] = {
@@ -34,13 +43,15 @@ _FRAMEWORK_PORTS: dict[str, int] = {
 }
 
 
-def generate(scan: ScanResult, platform: str, options: CicdOptions) -> tuple[str, str]:
+def generate(scan: ScanResult, platform: str, options: CicdOptions, deploy_platform: str = "generic") -> tuple[str, str]:
     """
     CI/CD 파이프라인 파일 내용과 저장 경로를 반환한다.
     Returns: (content, file_path)
     """
+    compound_key = f"{platform}_{deploy_platform}"
+    key = compound_key if compound_key in _PLATFORM_MAP else platform
     template_file, file_path = _PLATFORM_MAP.get(
-        platform, ("github_actions.j2", ".github/workflows/deploy.yml")
+        key, ("github_actions.j2", ".github/workflows/deploy.yml")
     )
 
     ctx = _build_context(scan, options)

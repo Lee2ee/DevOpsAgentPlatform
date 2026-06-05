@@ -44,7 +44,7 @@ _GLOB_PATTERNS = [
 # CI/CD 매핑
 _CICD_FILES = {
     "Jenkinsfile": "jenkins",
-    ".gitlab-ci.yml": "gitlab",
+    ".gitlab-ci.yml": "gitlab_ci",
 }
 
 

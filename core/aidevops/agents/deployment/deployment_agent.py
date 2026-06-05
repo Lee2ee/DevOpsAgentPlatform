@@ -406,6 +406,7 @@ async def _run(
     logs = []
 
     previous_image: str | None = None  # rollback용
+    compose_cmd = "docker compose"  # fallback; get_docker_compose_cmd로 덮어씀
 
     try:
         compose_cmd = await ssh_deployer.get_docker_compose_cmd(conn)

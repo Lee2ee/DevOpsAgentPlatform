@@ -130,13 +130,13 @@ async def _collect_logs_from_deployment(
             server["host"], int(server["port"]), server["username"],
             private_key=private_key, password=password,
         )
-        # deploy_steps에서 app_dir 확인
+        # deployments 테이블에서 project name 기반으로 app_dir 추론
         cursor = await db.execute(
-            "SELECT log_output FROM deploy_steps WHERE deployment_id = ? AND name = 'precheck'",
+            "SELECT p.name FROM projects p JOIN deployments d ON d.project_id = p.id WHERE d.id = ?",
             (deployment_id,),
         )
-        row = await cursor.fetchone()
-        app_dir = "/app"
+        proj_row = await cursor.fetchone()
+        app_dir = f"/app/{proj_row['name']}" if proj_row else "/app"
 
         logs = await collect_compose_logs(conn, app_dir)
         conn.close()
